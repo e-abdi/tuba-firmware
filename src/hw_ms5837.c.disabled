@@ -1,0 +1,130 @@
+
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/logging/log.h>
+#include <string.h>
+#include "hw_ms5837.h"
+
+LOG_MODULE_REGISTER(ms5837, LOG_LEVEL_INF);
+
+/* Bind to I2C1; the overlay should ensure i2c1 exists */
+static const struct device *const i2c_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c1));
+static const struct device *const uart_cons = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+
+#define MS5837_ADDR 0x76
+#define CMD_RESET 0x1E
+#define CMD_ADC_CONV 0x40
+#define CMD_ADC_READ 0x00
+#define CMD_PROM_READ 0xA0
+
+/* OSR 4096 for best resolution */
+#define CMD_D1_4096 (CMD_ADC_CONV | 0x10 | 0x08)
+#define CMD_D2_4096 (CMD_ADC_CONV | 0x00 | 0x08)
+
+static uint16_t C[8]; /* calibration PROM C1..C6, plus CRC */
+
+static int i2c_write_cmd(uint8_t cmd) {
+    return i2c_write(i2c_dev, &cmd, 1, MS5837_ADDR);
+}
+static int i2c_read_buf(uint8_t reg, uint8_t *buf, size_t len) {
+    int rc = i2c_write(i2c_dev, &reg, 1, MS5837_ADDR);
+    if (rc) return rc;
+    return i2c_read(i2c_dev, buf, len, MS5837_ADDR);
+}
+
+static int prom_read(void) {
+    for (int i = 0; i < 8; i++) {
+        uint8_t reg = CMD_PROM_READ + (i * 2);
+        uint8_t b[2];
+        int rc = i2c_read_buf(reg, b, 2);
+        if (rc) return rc;
+        C[i] = ((uint16_t)b[0] << 8) | b[1];
+    }
+    return 0;
+}
+
+int ms5837_init(void) {
+    if (i2c_dev == NULL || !device_is_ready(i2c_dev)) {
+        return -ENODEV;
+    }
+    int rc = i2c_write_cmd(CMD_RESET);
+    if (rc) return rc;
+    k_msleep(3);
+    rc = prom_read();
+    return rc;
+}
+
+static int convert(uint8_t cmd, uint32_t *adc) {
+    int rc = i2c_write_cmd(cmd);
+    if (rc) return rc;
+    k_msleep(10); /* conversion time for OSR4096 ~ 9.04ms */
+    uint8_t data[3];
+    rc = i2c_read_buf(CMD_ADC_READ, data, 3);
+    if (rc) return rc;
+    *adc = ((uint32_t)data[0] << 16) | ((uint32_t)data[1] << 8) | data[2];
+    return 0;
+}
+
+int ms5837_read(double *temp_c, double *press_kpa) {
+    uint32_t D1=0, D2=0;
+    int rc = convert(CMD_D1_4096, &D1);
+    if (rc) return rc;
+    rc = convert(CMD_D2_4096, &D2);
+    if (rc) return rc;
+
+    /* 2nd order compensation per datasheet (30BA) */
+    int64_t dT = (int64_t)D2 - ((int64_t)C[5] * 256);
+    int64_t TEMP = 2000 + (dT * C[6]) / 8388608; /* 2^23 */
+
+    int64_t OFF = ((int64_t)C[2] * 131072) + ( ( (int64_t)C[4] * dT) / 64 );
+    int64_t SENS= ((int64_t)C[1] * 65536) + ( ( (int64_t)C[3] * dT) / 128 );
+
+    int64_t T2=0, OFF2=0, SENS2=0;
+    if (TEMP < 2000) {
+        T2 = (dT*dT) / (1LL<<31);
+        int64_t t2000 = TEMP - 2000;
+        OFF2 = 5 * (t2000*t2000) / 2;
+        SENS2= 5 * (t2000*t2000) / 4;
+        if (TEMP < -1500) {
+            int64_t t1500 = TEMP + 1500;
+            OFF2 += 7 * (t1500*t1500);
+            SENS2+= 11 * (t1500*t1500) / 2;
+        }
+    }
+
+    TEMP -= T2;
+    OFF  -= OFF2;
+    SENS -= SENS2;
+
+    int64_t P = (((int64_t)D1 * SENS) / 2097152 - OFF) / 32768; /* 2^21, 2^15 */
+    if (temp_c) *temp_c = TEMP / 100.0;
+    if (press_kpa) *press_kpa = P / 10.0; /* mbar -> kPa */
+
+    return 0;
+}
+
+void ms5837_stream_interactive(void) {
+    if (!device_is_ready(uart_cons)) {
+        while (1) { k_sleep(K_SECONDS(1)); }
+    }
+    LOG_INF("MS5837 stream: press 'q' + Enter to quit");
+    while (1) {
+        double t, p;
+        int rc = ms5837_read(&t, &p);
+        if (rc == 0) {
+            LOG_INF("EXT Pressure: %.3f kPa  Temp: %.2f C", p, t);
+        } else {
+            LOG_ERR("MS5837 read error: %d", rc);
+        }
+        if (uart_poll_in(uart_cons, &(unsigned char){0}) == 0) {
+            /* read until newline */
+            unsigned char ch;
+            do { } while (uart_poll_in(uart_cons, &ch) != 0);
+            if (ch == 'q' || ch == 'Q') break;
+        }
+        k_sleep(K_SECONDS(1));
+    }
+}

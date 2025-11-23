@@ -1,0 +1,300 @@
+#include <zephyr/kernel.h>
+#include <zephyr/drivers/i2c.h>
+#include <zephyr/sys/printk.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include "hw_gps.h"
+
+/* u-blox DDC (I2C) */
+#define UBX_I2C_ADDR         0x42   /* 7-bit address */
+#define UBX_REG_BYTES_AVAIL  0xFD   /* 16-bit little-endian */
+#define UBX_REG_DATA_STREAM  0xFF   /* streaming FIFO */
+
+#define GPS_LINE_MAX 160
+
+#if !DT_NODE_HAS_STATUS(DT_NODELABEL(i2c1), okay)
+#error "i2c1 not found/enabled in devicetree; enable &i2c1 in your overlay"
+#endif
+
+static const struct device *const gps_i2c = DEVICE_DT_GET(DT_NODELABEL(i2c1));
+
+
+
+
+/* ---- Low-level helpers using write_read (more compatible) ---- */
+
+static int ddc_bytes_available(uint16_t *out_avail)
+{
+    uint8_t reg = UBX_REG_BYTES_AVAIL;
+    uint8_t buf[2] = {0};
+    int rc = i2c_write_read(gps_i2c, UBX_I2C_ADDR, &reg, 1, buf, 2);
+    if (rc) return rc;
+    *out_avail = (uint16_t)(buf[0] | (buf[1] << 8));
+    return 0;
+}
+
+static int ddc_read_stream(uint8_t *dst, size_t len)
+{
+    uint8_t reg = UBX_REG_DATA_STREAM;
+    return i2c_write_read(gps_i2c, UBX_I2C_ADDR, &reg, 1, dst, len);
+}
+
+/* ---- Tiny NMEA helpers ---- */
+static bool nmea_degmin_to_deg(const char *s, bool is_lat, double *out_deg)
+{
+    size_t len = strlen(s);
+    if (is_lat) { if (len < 4) return false; }
+    else        { if (len < 5) return false; }
+
+    char degbuf[4] = {0};
+    const char *minstr = NULL;
+
+    if (is_lat) { memcpy(degbuf, s, 2); minstr = s + 2; }
+    else        { memcpy(degbuf, s, 3); minstr = s + 3; }
+
+    int deg = atoi(degbuf);
+    double minutes = atof(minstr);
+    *out_deg = deg + minutes / 60.0;
+    return true;
+}
+
+static bool parse_gga(const char *nmea, struct gps_fix *fix)
+{
+    if (!strstr(nmea, "GGA")) return false;
+
+    char buf[GPS_LINE_MAX];
+    strncpy(buf, nmea, sizeof(buf));
+    buf[sizeof(buf)-1] = '\0';
+
+    const char *f[16] = {0};
+    int nf = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(buf, ",", &save); tok && nf < 16; tok = strtok_r(NULL, ",", &save)) {
+        f[nf++] = tok;
+    }
+    if (nf < 10) return false;
+
+    const char *slat = f[2];
+    const char *ns   = f[3];
+    const char *slon = f[4];
+    const char *ew   = f[5];
+    const char *sfix = f[6];
+    const char *shdop= f[8];
+
+    if (!slat || !ns || !slon || !ew || !sfix || !shdop) return false;
+
+    int fixq = atoi(sfix);
+    double hdop = atof(shdop);
+
+    double lat_deg, lon_deg;
+    if (!nmea_degmin_to_deg(slat, true, &lat_deg)) return false;
+    if (!nmea_degmin_to_deg(slon, false, &lon_deg)) return false;
+
+    if (ns[0] == 'S') lat_deg = -lat_deg;
+    if (ew[0] == 'W') lon_deg = -lon_deg;
+
+    fix->fix_quality = fixq;
+    fix->hdop = hdop;
+    fix->lat = lat_deg;
+    fix->lon = lon_deg;
+    return true;
+}
+
+/* ---- Public API ---- */
+
+int gps_init(void)
+{
+    if (!device_is_ready(gps_i2c)) {
+        printk("[GPS/I2C] i2c0 not ready\r\n");
+        return -ENODEV;
+    }
+    printk("[GPS/I2C] i2c0 ready (GP4=SDA, GP5=SCL). Scanning bus...\r\n");
+
+    /* Quick scan to verify presence of 0x42 */
+    int found = 0;
+    for (uint8_t addr = 0x08; addr < 0x78; ++addr) {
+        /* zero-length write is a common 'probe' */
+        int rc = i2c_write(gps_i2c, NULL, 0, addr);
+        if (rc == 0) {
+            printk("[I2C] device @ 0x%02X\r\n", addr);
+            if (addr == UBX_I2C_ADDR) found = 1;
+        }
+    }
+    if (!found) {
+        printk("[GPS/I2C] WARNING: 0x42 not found on the bus. "
+               "Check SPI jumper (OPEN for I2C), wiring, power, and pull-ups.\r\n");
+        /* continue; we’ll still try reads so you can see rc codes */
+    }
+
+    /* Try a bytes-available read once */
+    uint16_t avail = 0;
+    int rc = ddc_bytes_available(&avail);
+    if (rc) {
+        printk("[GPS/I2C] avail rc=%d (ETIMEDOUT=-116, EIO=-5, ENXIO=-6)\r\n", rc);
+        return rc;
+    }
+    printk("[GPS/I2C] initial avail=%u\r\n", (unsigned)avail);
+    return 0;
+}
+
+/* Reuse name for UI: “sniff” the stream for timeout_sec seconds */
+int gps_uart_sniff(int timeout_sec)
+{
+    if (!device_is_ready(gps_i2c)) {
+        printk("[GPS/I2C] i2c0 not ready\r\n");
+        return -ENODEV;
+    }
+
+    const int64_t t0 = k_uptime_get();
+    const int64_t t_end = t0 + (int64_t)timeout_sec * 1000;
+
+    uint32_t bytes = 0, lines = 0;
+    int last_s = -1;
+    int echo_lines = 10;
+    char line[GPS_LINE_MAX]; size_t li = 0;
+
+    printk("[GPS/I2C] sniff for %ds...\r\n", timeout_sec);
+
+    while (k_uptime_get() < t_end) {
+        uint16_t avail = 0;
+        int rc = ddc_bytes_available(&avail);
+        if (rc) {
+            printk("[GPS/I2C] avail rc=%d\r\n", rc);
+            k_sleep(K_MSEC(50));
+        } else if (avail) {
+            uint8_t buf[64];
+            size_t to_read = (avail > sizeof(buf)) ? sizeof(buf) : avail;
+            rc = ddc_read_stream(buf, to_read);
+            if (rc == 0) {
+                for (size_t i = 0; i < to_read; ++i) {
+                    uint8_t ch = buf[i];
+                    bytes++;
+                    if (ch == '\r') continue;
+                    if (ch == '\n') {
+                        if (li > 0) {
+                            line[li] = 0;
+                            lines++;
+                            if (echo_lines > 0) {
+                                printk("[GPS/I2C] NMEA: %s\r\n", line);
+                                echo_lines--;
+                            }
+                            li = 0;
+                        }
+                    } else {
+                        if (li < sizeof(line)-1) line[li++] = (char)ch;
+                        else li = 0;
+                    }
+                }
+            } else {
+                printk("[GPS/I2C] read rc=%d\r\n", rc);
+                k_sleep(K_MSEC(50));
+            }
+        } else {
+            k_sleep(K_MSEC(20));
+        }
+
+        int elapsed_s = (int)((k_uptime_get() - t0) / 1000);
+        if (elapsed_s != last_s) {
+            int remaining = timeout_sec - elapsed_s;
+            if (remaining < 0) remaining = 0;
+            printk("[GPS/I2C] sniff %ds/%ds (bytes=%u, lines=%u)\r\n",
+                   elapsed_s, timeout_sec, bytes, lines);
+            last_s = elapsed_s;
+        }
+    }
+
+    printk("[GPS/I2C] sniff done: bytes=%u, lines=%u\r\n", bytes, lines);
+    return (bytes > 0) ? 0 : -ETIMEDOUT;
+}
+
+int gps_acquire_fix(int timeout_sec, float max_hdop, struct gps_fix *out)
+{
+    if (!device_is_ready(gps_i2c)) {
+        printk("[GPS/I2C] i2c0 not ready\r\n");
+        return -ENODEV;
+    }
+
+    const int64_t t0 = k_uptime_get();
+    const int64_t deadline = t0 + (int64_t)timeout_sec * 1000;
+
+    uint32_t bytes_seen = 0, lines_seen = 0, gga_seen = 0;
+    double last_hdop = -1.0;
+    int last_fixq = -1;
+    int last_s = -1;
+    int echo_lines = 5;
+    char line[GPS_LINE_MAX]; size_t li = 0;
+
+    printk("[GPS/I2C] waiting for fix (HDOP <= %.1f) up to %ds\r\n", (double)max_hdop, timeout_sec);
+
+    while (k_uptime_get() < deadline) {
+        uint16_t avail = 0;
+        int rc = ddc_bytes_available(&avail);
+        if (rc) { k_sleep(K_MSEC(50)); continue; }
+
+        if (avail) {
+            uint8_t buf[96];
+            size_t to_read = (avail > sizeof(buf)) ? sizeof(buf) : avail;
+            rc = ddc_read_stream(buf, to_read);
+            if (rc) { k_sleep(K_MSEC(20)); continue; }
+
+            for (size_t i = 0; i < to_read; ++i) {
+                uint8_t ch = buf[i];
+                bytes_seen++;
+                if (ch == '\r') continue;
+                if (ch == '\n') {
+                    if (li > 0) {
+                        line[li] = 0;
+                        lines_seen++;
+
+                        if (echo_lines > 0) {
+                            printk("[GPS/I2C] NMEA: %s\r\n", line);
+                            echo_lines--;
+                        }
+
+                        struct gps_fix fx;
+                        if (parse_gga(line, &fx)) {
+                            gga_seen++;
+                            last_hdop = fx.hdop;
+                            last_fixq = fx.fix_quality;
+
+                            if (fx.fix_quality >= 1 && fx.hdop > 0.0 && fx.hdop <= (double)max_hdop) {
+                                if (out) *out = fx;
+                                printk("[GPS/I2C] FIX OK: fix=%d hdop=%.1f lat=%.6f lon=%.6f\r\n",
+                                       fx.fix_quality, fx.hdop, fx.lat, fx.lon);
+                                return 0;
+                            }
+                        }
+                        li = 0;
+                    }
+                } else {
+                    if (li < sizeof(line)-1) line[li++] = (char)ch;
+                    else li = 0;
+                }
+            }
+        } else {
+            k_sleep(K_MSEC(20));
+        }
+
+        int elapsed_s = (int)((k_uptime_get() - t0) / 1000);
+        if (elapsed_s != last_s) {
+            int remaining = timeout_sec - elapsed_s;
+            if (remaining < 0) remaining = 0;
+            printk("[GPS/I2C] ... %ds left (bytes=%u, lines=%u, GGA=%u)\r\n",
+                   remaining, bytes_seen, lines_seen, gga_seen);
+            if (last_hdop > 0) {
+                printk("           last GGA: hdop=%.1f fixq=%d\r\n", last_hdop, last_fixq);
+            }
+            last_s = elapsed_s;
+        }
+    }
+
+    printk("[GPS/I2C] TIMEOUT: bytes=%u lines=%u GGA=%u%s\r\n",
+           bytes_seen, lines_seen, gga_seen,
+           (gga_seen ? "" : " (no GGA seen—check SPI jumper and I2C wiring: GP4 SDA, GP5 SCL)"));
+    if (gga_seen) {
+        printk("[GPS/I2C] Last GGA hdop=%.1f fixq=%d (need fixq>=1 and hdop<=%.1f)\r\n",
+               last_hdop, last_fixq, (double)max_hdop);
+    }
+    return -ETIMEDOUT;
+}

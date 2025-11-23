@@ -1,0 +1,30 @@
+# Build directory
+build/
+build*/
+
+# Zephyr build artifacts
+*.elf
+*.bin
+*.hex
+*.uf2
+*.map
+*.lst
+
+# Editor/IDE files
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Backup files
+*.bak
+*~
+
+# Log files
+*.log
