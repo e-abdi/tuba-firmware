@@ -1,18 +1,23 @@
 / {
 	chosen {
-		/* Option 1: UART0 console via MAX3232 (GP0/GP1) */
+		/* ===== CONSOLE OUTPUT SELECTION ===== */
+		
+		/* Option 1: USB CDC ACM console (default for Pico/Pico W) */
+		 zephyr,console    = &cdc_acm_uart; 
+		 zephyr,shell-uart = &cdc_acm_uart;
+		
+		/* Option 2: UART0 console via MAX3232 (uncomment to use) */
 		/* zephyr,console    = &uart0; */
 		/* zephyr,shell-uart = &uart0; */
 		
-		/* Option 2: USB CDC ACM console (comment out uart0 above, uncomment below) */
-		 zephyr,console    = &cdc_acm_uart; 
-		 zephyr,shell-uart = &cdc_acm_uart;
+		/* Option 3: WiFi socket console (Pico W only - no devicetree change needed) */
+		/* Just enable CONFIG_WIFI_CYWIP in prj.conf, no console entry needed */
+		
+		/* ===================================== */
 		 
 		/* NVS storage partition */
 		zephyr,settings-partition = &storage_partition;
-	};
-
-	aliases {
+	};	aliases {
 		/* Motors */
 		roll-in1 = &roll_in1;
 		roll-in2 = &roll_in2;

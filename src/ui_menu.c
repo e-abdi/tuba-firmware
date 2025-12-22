@@ -25,6 +25,7 @@ static int current_param_index = 0;
 
 /* POWERUP countdown */
 static int32_t remaining_sec = STARTUP_TIMEOUT_SEC;
+static int32_t tick_counter = 0;  /* Counter to track seconds for EVT_TICK */
 
 /* --- Entry functions --- */
 void on_entry_POWERUP_WAIT(void){
@@ -105,8 +106,14 @@ void on_entry_DEPLOYED(void){ app_printk("\r\n== DEPLOYED state ==\r\n"); deploy
 state_id_t on_event_POWERUP_WAIT(const event_t *e){
     switch (e->id) {
     case EVT_TICK:
-        if (remaining_sec > 0) remaining_sec--;
-        app_printk("\rpress ENTER within %d seconds or the glider will go to RECOVERY   ", remaining_sec);
+        /* Tick fires every 50ms (20 times/sec); only decrement every 20 ticks (1 second) */
+        tick_counter++;
+        if (tick_counter >= 20) {
+            tick_counter = 0;
+            if (remaining_sec > 0) remaining_sec--;
+            /* Update display once per second */
+            app_printk("\rpress ENTER within %d seconds or the glider will go to RECOVERY   ", remaining_sec);
+        }
         return ST_POWERUP_WAIT;
     case EVT_ENTER:
         app_printk("\r\nENTER received → MENU\r\n");
@@ -130,15 +137,22 @@ state_id_t on_event_DEPLOYED(const event_t *e){ return ST_DEPLOYED; }
 
 /* --- Line handler --- */
 state_id_t ui_handle_line(state_id_t state, const char *line){
+    /* Ignore empty lines */
+    if (!line || line[0] == '\0') {
+        return ST__COUNT;  /* No state change */
+    }
+    
     if (state==ST_MENU){
-        if(line[0]=='1') { on_entry_HWTEST_MENU(); return ST_HWTEST_MENU; }
-        if(line[0]=='2') { on_entry_DEPLOYED();   return ST_DEPLOYED; }
-        if(line[0]=='3') { on_entry_PARAMS_MENU();   return ST_PARAMS_MENU; }
-        app_printk("Invalid.\r\n"); on_entry_MENU();   return ST_MENU;
+        if(line[0]=='1') return ST_HWTEST_MENU;
+        if(line[0]=='2') return ST_DEPLOYED;
+        if(line[0]=='3') return ST_PARAMS_MENU;
+        /* Invalid input - stay in same state, print error, no state entry call */
+        app_printk("Invalid.\r\n");
+        return ST_MENU;
 
     }
     if (state==ST_HWTEST_MENU){
-        if(line[0]=='1') { on_entry_PR_MENU();    return ST_PR_MENU; }
+        if(line[0]=='1') return ST_PR_MENU;
         if(line[0]=='2') { app_printk("[PUMP] Enter seconds [-10,10], q to quit\r\n> "); return ST_PUMP_INPUT; }
         if(line[0]=='3') {
             long roll  = (long)motor_get_position_sec(MOTOR_ROLL);
@@ -146,36 +160,35 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
             long pump  = (long)pump_get_position_sec();
             app_printk("\r\n[POSITION] roll=%lds, pitch=%lds, pump=%lds\r\n",
                        roll, pitch, pump);
-            on_entry_HWTEST_MENU();
             return ST_HWTEST_MENU;
         }
         if(line[0]=='4') {
             /* BMP180 stream (blocking; returns when user hits 'q') */
             bmp180_stream_interactive();
-            on_entry_HWTEST_MENU();
             return ST_HWTEST_MENU;
         }
         if(line[0]=='5') {
             /* MS5837 stream (blocking; returns when user hits 'q') */
             ms5837_stream_interactive();
-            on_entry_HWTEST_MENU();
             return ST_HWTEST_MENU;
         }
-        if(line[0]=='6') { gps_fix_interactive(); on_entry_HWTEST_MENU(); return ST_HWTEST_MENU; }
-        if(line[0]=='7') { on_entry_COMPASS_MENU(); return ST_COMPASS_MENU; }
-        if(line[0]=='9') { on_entry_MENU();       return ST_MENU; }
-        app_printk("Invalid.\r\n"); on_entry_HWTEST_MENU(); return ST_HWTEST_MENU;
+        if(line[0]=='6') { gps_fix_interactive(); return ST_HWTEST_MENU; }
+        if(line[0]=='7') { return ST_COMPASS_MENU; }
+        if(line[0]=='9') { return ST_MENU; }
+        app_printk("Invalid.\r\n");
+        return ST_HWTEST_MENU;
     }
 
     if (state==ST_PR_MENU){
         if(line[0]=='1'){ current_motor=MOTOR_ROLL;  app_printk("[ROLL] Enter seconds [-10,10], q to quit\r\n> ");  return ST_PR_INPUT; }
         if(line[0]=='2'){ current_motor=MOTOR_PITCH; app_printk("[PITCH] Enter seconds [-10,10], q to quit\r\n> "); return ST_PR_INPUT; }
-        if(line[0]=='9'){ on_entry_HWTEST_MENU();    return ST_HWTEST_MENU; }
-        app_printk("Invalid.\r\n"); on_entry_PR_MENU();  return ST_PR_MENU;
+        if(line[0]=='9'){ return ST_HWTEST_MENU; }
+        app_printk("Invalid.\r\n");
+        return ST_PR_MENU;
     }
 
     if (state==ST_PR_INPUT){
-        if((line[0]=='q'||line[0]=='Q') && line[1]=='\0'){ on_entry_PR_MENU(); return ST_PR_MENU; }
+        if((line[0]=='q'||line[0]=='Q') && line[1]=='\0'){ return ST_PR_MENU; }
         char *endp=NULL; long val=strtol(line,&endp,10);
         if(endp==line||*endp!='\0'){ app_printk("Not a valid integer: '%s'\r\n> ", line); return ST_PR_INPUT; }
         if(val<TEST_MIN_SEC||val>TEST_MAX_SEC){ app_printk("Range -10..10 only\r\n> ");     return ST_PR_INPUT; }
@@ -184,7 +197,7 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
     }
 
     if (state==ST_PUMP_INPUT){
-        if((line[0]=='q'||line[0]=='Q') && line[1]=='\0'){ on_entry_HWTEST_MENU(); return ST_HWTEST_MENU; }
+        if((line[0]=='q'||line[0]=='Q') && line[1]=='\0'){ return ST_HWTEST_MENU; }
         char *endp=NULL; long val=strtol(line,&endp,10);
         if(endp==line||*endp!='\0'){ app_printk("Not a valid integer: '%s'\r\n> ", line); return ST_PUMP_INPUT; }
         if(val<TEST_MIN_SEC||val>TEST_MAX_SEC){ app_printk("Range -10..10 only\r\n> ");     return ST_PUMP_INPUT; }
@@ -192,18 +205,19 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
         pump_run(dir,dur); app_printk("> "); return ST_PUMP_INPUT;
     }
 
-if (state==ST_COMPASS_MENU){
-    if(line[0]=='1') { hmc6343_user_calibrate_interactive(); on_entry_COMPASS_MENU(); return ST_COMPASS_MENU; }
-    if(line[0]=='2') { hmc6343_stream_heading_interactive(); on_entry_COMPASS_MENU(); return ST_COMPASS_MENU; }
-    if(line[0]=='9') { on_entry_HWTEST_MENU(); return ST_HWTEST_MENU; }
-    app_printk("Invalid.\r\n"); on_entry_COMPASS_MENU(); return ST_COMPASS_MENU;
-}
+    if (state==ST_COMPASS_MENU){
+        if(line[0]=='1') { hmc6343_user_calibrate_interactive(); return ST_COMPASS_MENU; }
+        if(line[0]=='2') { hmc6343_stream_heading_interactive(); return ST_COMPASS_MENU; }
+        if(line[0]=='9') { return ST_HWTEST_MENU; }
+        app_printk("Invalid.\r\n");
+        return ST_COMPASS_MENU;
+    }
 
     if (state==ST_PARAMS_MENU){
         /* navigation */
-        if(line[0]=='x' || line[0]=='X'){ on_entry_MENU(); return ST_MENU; }
-        if(line[0]=='s' || line[0]=='S'){ app_params_save(); on_entry_PARAMS_MENU(); return ST_PARAMS_MENU; }
-        if(line[0]=='r' || line[0]=='R'){ app_params_reset_defaults(); on_entry_PARAMS_MENU(); return ST_PARAMS_MENU; }
+        if(line[0]=='x' || line[0]=='X'){ return ST_MENU; }
+        if(line[0]=='s' || line[0]=='S'){ app_params_save(); return ST_PARAMS_MENU; }
+        if(line[0]=='r' || line[0]=='R'){ app_params_reset_defaults(); return ST_PARAMS_MENU; }
         /* select parameter to edit */
         if(line[0]=='1'){ current_param_index = 1; app_printk("Enter Dive depth [m]: "); return ST_PARAM_INPUT; }
         if(line[0]=='2'){ current_param_index = 2; app_printk("Enter Wait before dive [s]: "); return ST_PARAM_INPUT; }
@@ -219,14 +233,15 @@ if (state==ST_COMPASS_MENU){
         if(line[0]=='c' || line[0]=='C'){ current_param_index = 12; app_printk("Enter Max roll [s]: "); return ST_PARAM_INPUT; }
         if(line[0]=='d' || line[0]=='D'){ current_param_index = 13; app_printk("Enter Roll time [s]: "); return ST_PARAM_INPUT; }
         if(line[0]=='e' || line[0]=='E'){ current_param_index = 14; app_printk("Enter Desired heading [deg]: "); return ST_PARAM_INPUT; }
-        app_printk("Invalid.\r\n"); on_entry_PARAMS_MENU(); return ST_PARAMS_MENU;
+        app_printk("Invalid.\r\n");
+        return ST_PARAMS_MENU;
     }
 
     if (state==ST_PARAM_INPUT){
         struct app_params *p = app_params_get();
         char *endp = NULL;
         long val = strtol(line,&endp,10);
-        if(endp==line||*endp!='\0'){ app_printk("Not a valid integer: '%s'\r\n", line); on_entry_PARAMS_MENU(); return ST_PARAMS_MENU; }
+        if(endp==line||*endp!='\0'){ app_printk("Not a valid integer: '%s'\r\n", line); return ST_PARAMS_MENU; }
     switch(current_param_index){
     case 1:  p->dive_depth_m = (float)val; break;
     case 2:  p->deploy_wait_s = (uint16_t)val; break;

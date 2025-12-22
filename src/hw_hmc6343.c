@@ -8,6 +8,7 @@
 #include <zephyr/sys/printk.h>
 #include <string.h>
 #include <errno.h>
+#include "net_console.h"
 
 static const struct device *const i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c0));
 static const struct device *const uart_console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
@@ -16,6 +17,12 @@ static const struct device *const uart_console = DEVICE_DT_GET(DT_CHOSEN(zephyr_
 static inline int i2c_write_cmd(uint8_t cmd){ return i2c_write(i2c_dev, &cmd, 1, HMC6343_ADDR); }
 
 static bool kbhit_quit(void){
+    /* Prefer net console (WiFi) input: requires ENTER */
+    char line[128];
+    if (net_console_poll_line(line, sizeof(line), K_NO_WAIT)) {
+        if ((line[0] == 'q' || line[0] == 'Q') && line[1] == '\0') return true;
+    }
+    /* Fallback to UART console single-key polling */
     if (!device_is_ready(uart_console)) return false;
     unsigned char c;
     while (uart_fifo_read(uart_console, &c, 1) == 1) { if (c=='q'||c=='Q') return true; }
@@ -65,7 +72,7 @@ static int hmc6343_init(void){
 
 void hmc6343_user_calibrate_interactive(void){
     if (hmc6343_init() != 0) return;
-    app_printk("[HMC6343] Entering user calibration (0x71). Rotate device; press 'q' to exit.\r\n");
+    app_printk("[HMC6343] Entering user calibration (0x71). Rotate device; press 'q' then ENTER to exit.\r\n");
     if (i2c_write_cmd(0x71) != 0) { app_printk("[HMC6343] Failed to enter calibration\r\n"); return; }
     while (!kbhit_quit()) { k_sleep(K_MSEC(50)); }
     app_printk("[HMC6343] Exiting calibration (0x7E)...\r\n");
@@ -76,7 +83,7 @@ void hmc6343_user_calibrate_interactive(void){
 
 void hmc6343_stream_heading_interactive(void){
     if (hmc6343_init() != 0) return;
-    app_printk("[HMC6343] Streaming Heading/Pitch/Roll; press 'q' to quit\r\n");
+    app_printk("[HMC6343] Streaming Heading/Pitch/Roll; press 'q' then ENTER to quit\r\n");
     int64_t next = k_uptime_get();
     while (1) {
         if (i2c_write_cmd(0x50) != 0) { app_printk("[HMC6343] write 0x50 failed\r\n"); return; }

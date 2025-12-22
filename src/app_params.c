@@ -3,12 +3,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/flash.h>
 #include <zephyr/sys/crc.h>
-#include <zephyr/irq.h>
 #include <string.h>
-
-/* RP2040 SDK flash functions for direct flash access */
-#include <hardware/flash.h>
-#include <hardware/sync.h>
 
 #include "app_params.h"
 #include "app_print.h"
@@ -97,67 +92,47 @@ SETTINGS_STATIC_HANDLER_DEFINE(app_params, "params",
 
 int app_params_init(void)
 {
-    /* Start from compiled-in defaults; will overwrite if flash has blob */
+    int rc;
+    
+    /* Start from compiled-in defaults; will overwrite if settings available */
     app_params_set_defaults_internal();
     app_printk("[PARAM] defaults applied\r\n");
 
-    /* Read directly from flash memory-mapped region */
-    const struct params_flash_blob *flash_ptr = 
-        (const struct params_flash_blob *)(XIP_BASE + PARAMS_FLASH_OFFSET);
-    
-    if (flash_ptr->magic == PARAMS_MAGIC) {
-        uint32_t crc = crc32_ieee_update(0, (const uint8_t *)&flash_ptr->params, sizeof(flash_ptr->params));
-        if (crc == flash_ptr->crc32) {
-            g_params = flash_ptr->params;
-            app_printk("[PARAM] loaded from raw flash (magic OK, CRC OK)\r\n");
-        } else {
-            app_printk("[PARAM] flash blob CRC mismatch (stored=0x%08x calc=0x%08x)\r\n", 
-                       flash_ptr->crc32, crc);
-        }
-    } else {
-        app_printk("[PARAM] no valid params blob (magic=0x%08x)\r\n", flash_ptr->magic);
+    /* Initialize Zephyr settings subsystem to load from NVS */
+    rc = settings_subsys_init();
+    if (rc != 0) {
+        app_printk("[PARAM] settings_subsys_init failed: %d\r\n", rc);
+        app_printk("[PARAM] continuing with defaults only\r\n");
+        return 0;
     }
+    
+    /* Load parameters from NVS if they exist */
+    rc = settings_load_subtree("params");
+    if (rc == 0) {
+        app_printk("[PARAM] loaded from NVS\r\n");
+    } else if (rc == -ENOENT) {
+        app_printk("[PARAM] no NVS data yet, using defaults\r\n");
+        return 0;
+    } else {
+        app_printk("[PARAM] settings_load_subtree failed: %d\r\n", rc);
+        app_printk("[PARAM] continuing with defaults\r\n");
+        return 0;
+    }
+    
     return 0;
 }
 int app_params_save(void)
 {
-    struct params_flash_blob blob = {
-        .magic = PARAMS_MAGIC,
-        .params = g_params,
-    };
-    blob.crc32 = crc32_ieee_update(0, (const uint8_t *)&blob.params, sizeof(blob.params));
-
-    app_printk("[PARAM] saving blob (crc=0x%08x) to 0x%08x\r\n", blob.crc32, PARAMS_FLASH_OFFSET);
-
-    /* Use RP2040 SDK flash functions directly - they handle XIP mode correctly */
-    /* Note: offset is relative to flash base (0x10000000), so subtract XIP base */
-    uint32_t flash_offset = PARAMS_FLASH_OFFSET;
+    int rc;
     
-    /* Disable interrupts during flash operations (SDK requirement) */
-    uint32_t ints = save_and_disable_interrupts();
-    
-    /* Erase sector (4096 bytes) */
-    flash_range_erase(flash_offset, PARAMS_FLASH_SECTOR_SIZE);
-    
-    /* Program the blob */
-    flash_range_program(flash_offset, (const uint8_t *)&blob, sizeof(blob));
-    
-    restore_interrupts(ints);
-    
-    /* Small delay to ensure write completion */
-    k_msleep(10);
-    
-    /* Verify write by reading directly from flash address */
-    const struct params_flash_blob *flash_ptr = 
-        (const struct params_flash_blob *)(XIP_BASE + flash_offset);
-    
-    if (flash_ptr->magic != PARAMS_MAGIC || flash_ptr->crc32 != blob.crc32) {
-        app_printk("[PARAM] verify FAILED after write (magic=0x%08x, crc=0x%08x)\r\n", 
-                   flash_ptr->magic, flash_ptr->crc32);
-        return -EIO;
+    /* Save parameters to NVS via settings subsystem */
+    rc = settings_save_one(APP_PARAMS_SETTINGS_KEY, &g_params, sizeof(g_params));
+    if (rc == 0) {
+        app_printk("[PARAM] saved to NVS successfully\r\n");
+    } else {
+        app_printk("[PARAM] save to NVS failed: %d\r\n", rc);
     }
-    app_printk("[PARAM] persisted & verified (%zu bytes)\r\n", sizeof(blob));
-    return 0;
+    return rc;
 }
 
 void app_params_reset_defaults(void)

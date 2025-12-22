@@ -7,6 +7,7 @@
 #include <zephyr/sys/printk.h>
 #include <stdint.h>
 #include <string.h>
+#include "net_console.h"
 
 #define BMP180_ADDR     0x77
 #define REG_CHIPID      0xD0
@@ -18,13 +19,10 @@
 #define OSS 0
 
 /* Console UART (for non-blocking 'q' detection) */
-static const struct device *const uart_cons = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+static const struct device *const uart_cons = DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_console));
 
-/* I2C1 on RP2040 */
-#if !DT_NODE_HAS_STATUS(DT_NODELABEL(i2c1), okay)
-#error "i2c1 is not enabled in devicetree; check boards/<board>.overlay"
-#endif
-static const struct device *const i2c0_dev = DEVICE_DT_GET(DT_NODELABEL(i2c1));
+/* I2C0 for sensors (optional; guard at runtime) */
+static const struct device *const i2c0_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c0));
 
 static int i2c_reg_read_u8(const struct device *i2c, uint8_t dev, uint8_t reg, uint8_t *val)
 {
@@ -137,29 +135,33 @@ static void bmp180_compensate(const struct bmp180_cal *c, int32_t UT, int32_t UP
 /* Public API expected by the menu */
 int bmp180_init(void)
 {
-    if (!device_is_ready(i2c0_dev)) {
-        app_printk("[Internal Pressure] i2c1 not ready\r\n");
+    if (i2c0_dev == NULL || !device_is_ready(i2c0_dev)) {
+        app_printk("[Internal Pressure] i2c0 not ready\r\n");
         return -ENODEV;
     }
+    /* Ensure bus speed is at 100 kHz for BMP180 */
+    (void)i2c_configure(i2c0_dev, I2C_MODE_CONTROLLER | I2C_SPEED_SET(I2C_SPEED_STANDARD));
     /* Probe sensor by reading CHIPID (should be 0x55) */
     uint8_t id = 0;
     if (i2c_reg_read_u8(i2c0_dev, BMP180_ADDR, REG_CHIPID, &id) || id != 0x55) {
         app_printk("[Internal Pressure] BMP180 not found (id=0x%02x)\r\n", id);
         return -ENODEV;
     }
-    app_printk("[Internal Pressure] BMP180 detected (id=0x%02x) on I2C1\r\n", id);
+    app_printk("[Internal Pressure] BMP180 detected (id=0x%02x) on i2c0\r\n", id);
     return 0;
 }
 
 static bool quit_requested(void)
 {
+    /* Prefer net console (WiFi) input: requires ENTER */
+    char line[128];
+    if (net_console_poll_line(line, sizeof(line), K_NO_WAIT)) {
+        if ((line[0] == 'q' || line[0] == 'Q') && line[1] == '\0') return true;
+    }
     if (!device_is_ready(uart_cons)) return false;
     uint8_t c;
     int rc = uart_poll_in(uart_cons, &c);
-    if (rc == 0 && (c == 'q' || c == 'Q')) {
-        return true;
-    }
-    return false;
+    return (rc == 0 && (c == 'q' || c == 'Q'));
 }
 
 void bmp180_stream_interactive(void)
@@ -175,7 +177,7 @@ void bmp180_stream_interactive(void)
         return;
     }
 
-    app_printk("[Internal Pressure] streaming — press 'q' to return\r\n");
+    app_printk("[Internal Pressure] streaming — press 'q' then ENTER to return\r\n");
 
     int64_t next = k_uptime_get();
     while (1) {

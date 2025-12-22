@@ -6,6 +6,7 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk.h>
+#include "net_console.h"
 
 #include <string.h>
 #include <stdbool.h>
@@ -20,17 +21,20 @@
 #define REG_STREAM     0xFF
 #define BURST_MAX      64
 
-/* I2C1 (GP4/GP5 on Pico per board overlay) */
-static const struct device *i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c1));
+/* I2C (optional; guard at runtime) */
+static const struct device *i2c_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c0));
 
 /* Console UART for nonblocking keypress checks */
-static const struct device *const uart_console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+static const struct device *const uart_console = DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_console));
 
 static bool quit_requested(void)
 {
-    if (!device_is_ready(uart_console)) {
-        return false;
+    /* Prefer net console (WiFi) input: requires ENTER */
+    char line[128];
+    if (net_console_poll_line(line, sizeof(line), K_NO_WAIT)) {
+        if ((line[0] == 'q' || line[0] == 'Q') && line[1] == '\0') return true;
     }
+    if (uart_console == NULL || !device_is_ready(uart_console)) return false;
     unsigned char c;
     int rc = uart_poll_in(uart_console, &c);
     return (rc == 0 && (c == 'q' || c == 'Q'));
@@ -138,18 +142,18 @@ static bool parse_rmc(const char *line, char *out_status, double *out_lat, doubl
 
 void gps_fix_interactive(void)
 {
-    if (!device_is_ready(i2c_dev)) {
+    if (i2c_dev == NULL || !device_is_ready(i2c_dev)) {
         k_sleep(K_MSEC(200));
-        if (!device_is_ready(i2c_dev)) {
-            app_printk("[GPS] I2C1 not ready\r\n");
+        if (i2c_dev == NULL || !device_is_ready(i2c_dev)) {
+            app_printk("[GPS] i2c0 not ready\r\n");
             return;
         }
     }
 
-    /* 400 kHz for faster draining of the DDC stream */
-    (void)i2c_configure(i2c_dev, I2C_MODE_CONTROLLER | I2C_SPEED_SET(I2C_SPEED_FAST));
+    /* Keep default bus speed (100 kHz) to avoid interfering with other sensors */
+    /* If needed later, switch speed temporarily and restore afterward. */
 
-    app_printk("[GPS] Watching for fix. Press 'q' to cancel.\r\n");
+    app_printk("[GPS] Watching for fix. Press 'q' then ENTER to cancel.\r\n");
 
     uint8_t buf[BURST_MAX];
     char line[256];

@@ -9,6 +9,7 @@ target_sources(app PRIVATE
   src/app_print.c
   src/app_params.c
   src/main.c
+  src/net_console.c
   src/ui_menu.c
   src/hw_motors.c
   src/hw_pump.c

@@ -18,13 +18,10 @@ static int mirror_putchar(int c)
 
 static int console_mirror_init(void)
 {
-    uart1_dev = DEVICE_DT_GET(DT_NODELABEL(uart1));
-
-    /* Older Zephyr trees expose only this symbol */
-    extern void __printk_hook_install(int (*fn)(int));
-    __printk_hook_install(mirror_putchar);
-
+    /* Temporarily disable console mirroring to isolate crash */
+    ARG_UNUSED(uart1_dev);
     return 0;
 }
 
-SYS_INIT(console_mirror_init, PRE_KERNEL_1, 0);
+/* Initialize at application time to avoid pre-kernel device readiness issues */
+SYS_INIT(console_mirror_init, APPLICATION, 0);

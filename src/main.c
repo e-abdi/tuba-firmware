@@ -1,11 +1,24 @@
 #include <zephyr/kernel.h>
+#include "net_console.h"
 #include <zephyr/sys/printk.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/usb/usb_device.h>
+#include <zephyr/settings/settings.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+/* WiFi support for Pico W */
+#ifdef CONFIG_WIFI
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/wifi_mgmt.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/net/dhcpv4_server.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#endif
 
 #include "app_events.h"
 #include "app_limits.h"
@@ -13,8 +26,9 @@
 #include "hw_motors.h"
 #include "hw_pump.h"
 #include "app_params.h"
-/* Console UART */
-static const struct device *const uart_console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+
+/* Console UART - using _OR_NULL to avoid crash if not available */
+static const struct device *const uart_console = DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_console));
 
 
 
@@ -75,18 +89,18 @@ static void scan_one_bus(const struct device *bus, const char *name)
 static void scan_i2c_buses(void)
 {
 #ifdef I2C0_NODE
-    const struct device *i2c1 = DEVICE_DT_GET_OR_NULL(I2C0_NODE);
-#else
-    const struct device *i2c1 = NULL;
-#endif
-#ifdef I2C1_NODE
-    const struct device *i2c0 = DEVICE_DT_GET_OR_NULL(I2C1_NODE);
+    const struct device *i2c0 = DEVICE_DT_GET_OR_NULL(I2C0_NODE);
 #else
     const struct device *i2c0 = NULL;
 #endif
+#ifdef I2C1_NODE
+    const struct device *i2c1 = DEVICE_DT_GET_OR_NULL(I2C1_NODE);
+#else
+    const struct device *i2c1 = NULL;
+#endif
 
-    scan_one_bus(i2c1, "i2c1");
     scan_one_bus(i2c0, "i2c0");
+    scan_one_bus(i2c1, "i2c1");
 }
 #else
 static void scan_i2c_buses(void) { /* I2C not enabled */ }
@@ -109,92 +123,428 @@ static void tick_cb(struct k_timer *tmr){ARG_UNUSED(tmr);post_event(EVT_TICK);}
 
 /* Line buffer */
 static char line_buf[APP_LINE_MAX];
-static bool read_line_nonblock(char *buf, size_t buflen) {
+/* Make WiFi telnet the primary console input by default */
+#define USE_WIFI_CONSOLE
+static bool read_line_nonblock(char *buf, size_t buflen, bool *enter_only) {
+    *enter_only = false;
+#ifdef USE_WIFI_CONSOLE
+    /* WiFi console: poll for a line from net console */
+    char line_tmp[128];
+    if (net_console_poll_line(line_tmp, sizeof(line_tmp), K_NO_WAIT)) {
+        size_t n = strnlen(line_tmp, sizeof(line_tmp));
+        if (n == 0) {
+            *enter_only = true;
+            /* Echo newline to UART for consistency */
+            printk("\r\n");
+            return false;
+        }
+        if (n >= buflen) n = buflen-1;
+        memcpy(buf, line_tmp, n);
+        buf[n] = '\0';
+        /* Echo line to UART console too */
+        printk("%s\r\n", buf);
+        return true;
+    }
+    return false;
+#else
+    /* UART console: nonblocking reader */
     static size_t idx = 0;
     uint8_t ch;
     while (uart_getch(&ch)) {
         if (ch=='\r'||ch=='\n') {
-            if (idx>0) { buf[idx]='\0'; idx=0; return true; }
-            else { post_event(EVT_ENTER); continue; }
-        } else { if (idx<buflen-1) buf[idx++]=(char)ch; }
+            if (idx > 0) {
+                printk("\r\n");
+                buf[idx]='\0';
+                idx=0;
+                return true;
+            } else {
+                printk("\r\n");
+                *enter_only = true;
+                return false;
+            }
+        } else if (idx<buflen-1) {
+            buf[idx++]=(char)ch;
+            printk("%c", ch);
+        }
     }
     return false;
+#endif
 }
 
 /* Current motor (used in PR_INPUT) */
 enum motor_id current_motor = MOTOR_ROLL;
 
-/* ------------------- Main loop ------------------- */
-void main(void) {
-#if defined(CONFIG_USB_DEVICE_STACK)
-    /* Initialize USB and wait for console to be ready */
-    if (usb_enable(NULL) != 0) {
+/* ------------------- WiFi Console Support (AP Mode) ------------------- */
+#ifdef CONFIG_WIFI
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/wifi_mgmt.h>
+
+static void wifi_ap_task(void *p1, void *p2, void *p3)
+{
+    ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
+    
+    app_printk("WiFi: Task started\r\n");
+    
+    /* Give networking subsystem time to start */
+    k_sleep(K_SECONDS(2));
+    app_printk("WiFi: Waited 2 seconds for networking\r\n");
+    
+    struct net_if *iface = net_if_get_default();
+    if (!iface) {
+        app_printk("WiFi: ERROR - No default network interface available\r\n");
         return;
     }
-    /* Wait for USB console to be ready and flash to stabilize */
-    k_sleep(K_MSEC(1000));
+    
+    app_printk("WiFi: Default interface obtained\r\n");
+    
+    /* Try to configure WiFi AP mode */
+    app_printk("WiFi: Attempting to enable AP mode...\r\n");
+    
+    struct wifi_connect_req_params connect_params = {
+        .ssid = (uint8_t *)"Tuba-Glider",
+        .ssid_length = 11,
+        .channel = 6,
+        .security = WIFI_SECURITY_TYPE_NONE,
+    };
+    
+    int status = net_mgmt(NET_REQUEST_WIFI_AP_ENABLE, iface, 
+                         &connect_params, sizeof(connect_params));
+    
+    app_printk("WiFi: AP enable returned status: %d\r\n", status);
+    
+    if (status != 0) {
+        app_printk("WiFi: ERROR - AP enable failed with code %d\r\n", status);
+        return;
+    }
+    
+    app_printk("WiFi: AP enabled successfully\r\n");
+    
+    /* Check interface status */
+    bool is_up = net_if_is_up(iface);
+    app_printk("WiFi: Interface is %s\r\n", is_up ? "UP" : "DOWN");
+    
+    /* Get interface index and info */
+    int if_index = net_if_get_by_iface(iface);
+    app_printk("WiFi: Interface index: %d\r\n", if_index);
+    
+    /* Bring interface up if needed */
+    if (!is_up) {
+        app_printk("WiFi: Bringing interface up...\r\n");
+        net_if_up(iface);
+        k_sleep(K_MSEC(100));
+        is_up = net_if_is_up(iface);
+        app_printk("WiFi: After net_if_up, interface is %s\r\n", is_up ? "UP" : "DOWN");
+    }
+    
+    app_printk("WiFi: AP 'Tuba-Glider' is broadcasting on channel 6\r\n");
+    
+    /* Set static IP address manually */
+    struct in_addr addr;
+    addr.s_addr = htonl(0xc0a80401);  /* 192.168.4.1 */
+    
+    app_printk("WiFi: Setting IP address to 192.168.4.1...\r\n");
+    int ret = net_if_ipv4_addr_add(iface, &addr, NET_ADDR_MANUAL, 0);
+    app_printk("WiFi: net_if_ipv4_addr_add returned: %d\r\n", ret);
+    
+    /* Set netmask (255.255.255.0) */
+    struct in_addr netmask;
+    netmask.s_addr = htonl(0xffffff00);
+    net_if_ipv4_set_netmask(iface, &netmask);
+    app_printk("WiFi: Netmask set to 255.255.255.0\r\n");
+    
+    /* Simple check: print interface name and L2 type */
+    app_printk("WiFi: Interface name: %s\r\n", net_if_get_device(iface)->name);
+    
+    app_printk("WiFi: Setup complete, awaiting connections on 192.168.4.1\r\n");
+    
+    /* Try to bind a UDP socket to verify network stack */
+    app_printk("WiFi: Testing network stack with UDP socket...\r\n");
+    int sock = zsock_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        app_printk("WiFi: ERROR - zsock_socket() failed with error %d\r\n", -sock);
+    } else {
+        app_printk("WiFi: Socket created successfully (fd=%d)\r\n", sock);
+        
+        struct sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(9000);
+        addr.sin_addr.s_addr = htonl(0xc0a80401);  /* 192.168.4.1 */
+        
+        int ret = zsock_bind(sock, (struct sockaddr *)&addr, sizeof(addr));
+        app_printk("WiFi: zsock_bind() returned: %d\r\n", ret);
+        
+        if (ret == 0) {
+            app_printk("WiFi: SUCCESS - UDP socket bound to 192.168.4.1:9000\r\n");
+        } else {
+            app_printk("WiFi: ERROR - zsock_bind() failed with error %d\r\n", ret);
+        }
+        
+        zsock_close(sock);
+    }
+    
+    /* WiFi monitoring enabled but quiet: avoid spamming status logs */
+    while (1) {
+        k_sleep(K_SECONDS(5));
+        /* Optionally, could re-check and recover if interface goes down, but stay silent */
+        (void)iface;
+    }
+}
+
+K_THREAD_DEFINE(wifi_ap, 1024, wifi_ap_task, NULL, NULL, NULL, 5, 0, 0);
 #endif
 
-    if (!uart_ready()) {
-        while (1) { app_printk("Console UART not ready!\r\n"); k_sleep(K_SECONDS(2)); }
+#ifdef CONFIG_WIFI
+#include "net_console.h"
+/* Simple TCP echo server for connectivity testing (telnet 192.168.4.1 23) */
+static void tcp_echo_server_task(void *p1, void *p2, void *p3)
+{
+    ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
+
+    /* Small delay to allow AP/IP to settle */
+    k_sleep(K_SECONDS(3));
+
+    int srv = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (srv < 0) {
+        app_printk("TCP: ERROR socket()=%d\r\n", srv);
+        return;
     }
 
-    /* Initialize parameters AFTER USB is ready so we can see debug output */
-    app_printk("=== Tuba AUV Initializing ===\r\n");
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(23);
+    /* Bind to any local address to avoid failures before IPv4 is set */
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    int opt = 1;
+    (void)zsock_setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    if (zsock_bind(srv, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        app_printk("TCP: bind failed\r\n");
+        /* Retry later in case IP was not ready yet */
+        zsock_close(srv);
+        k_sleep(K_SECONDS(2));
+        srv = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (srv < 0) {
+            app_printk("TCP: ERROR socket()=%d\r\n", srv);
+            return;
+        }
+        (void)zsock_setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        if (zsock_bind(srv, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+            app_printk("TCP: bind failed again\r\n");
+            zsock_close(srv);
+            return;
+        }
+    }
+    if (zsock_listen(srv, 1) != 0) {
+        app_printk("TCP: listen failed\r\n");
+        zsock_close(srv);
+        return;
+    }
+    app_printk("TCP: Listening on 0.0.0.0:23 (telnet)\r\n");
+
+    while (1) {
+        struct sockaddr_in cli;
+        socklen_t clilen = sizeof(cli);
+        int fd = zsock_accept(srv, (struct sockaddr *)&cli, &clilen);
+        if (fd < 0) {
+            k_sleep(K_MSEC(200));
+            continue;
+        }
+        app_printk("TCP: Client connected\r\n");
+        net_console_add(fd);
+
+        /* Send a banner so the client sees immediate output */
+        const char *banner =
+            "\r\nTuba-Glider WiFi console (echo test)\r\n"
+            "Type and press ENTER — your input will echo.\r\n"
+            "Note: Serial UART is the primary console; this TCP port is a simple echo.\r\n\r\n";
+        (void)zsock_send(fd, banner, strlen(banner), 0);
+
+        char buf[128];
+        while (1) {
+            int n = zsock_recv(fd, buf, sizeof(buf), 0);
+            if (n <= 0) break;
+            /* Normalize line endings to CRLF for telnet clients */
+            for (int i = 0; i < n; i++) {
+                if (buf[i] == '\n') buf[i] = '\r';
+            }
+            (void)zsock_send(fd, buf, n, 0);
+            /* Feed incoming bytes into net-console input aggregator */
+            extern void net_console_ingest_bytes(const char *buf, size_t len);
+            net_console_ingest_bytes(buf, n);
+        }
+        zsock_close(fd);
+        net_console_remove(fd);
+        app_printk("TCP: Client disconnected\r\n");
+    }
+}
+
+/* Increase stack to avoid overflow during socket I/O and formatting */
+K_THREAD_DEFINE(tcp_echo, 2048, tcp_echo_server_task, NULL, NULL, NULL, 6, 0, 0);
+#endif
+
+/* ------------------- Main loop ------------------- */
+void main(void) {
+    /* Boot banner */
+    printk("=== ESP32 Boot ===\r\n");
+    k_sleep(K_MSEC(50));
+
+    /* Init settings (NVS) and app params */
+    int r = settings_subsys_init();
+    printk("Settings init: %d\r\n", r);
     (void)app_params_init();
-    app_printk("=== Initialization Complete ===\r\n");
+    app_printk("Params: initialized and loaded\r\n");
 
-    uint8_t dummy; (void)uart_poll_in(uart_console, &dummy);
-    /* Scan I2C buses at startup */
+#if defined(CONFIG_I2C)
+    app_printk("I2C: scanning buses...\r\n");
     scan_i2c_buses();
+#endif
 
-    (void)motors_init();
+    /* Test pump init */
+    printk("Initializing pump...\r\n");
     (void)pump_init();
+    printk("Pump initialized\r\n");
+
+    printk("Main loop starting...\r\n");
+    k_sleep(K_MSEC(100));
+
+    /* Start timers */
+    /* Match startup timeout to STARTUP_TIMEOUT_SEC (10 min now) */
+    k_timer_start(&startup_timeout, K_SECONDS(STARTUP_TIMEOUT_SEC), K_NO_WAIT);
+    k_timer_start(&ui_tick, K_MSEC(50), K_MSEC(50));
+
+    /* Initialize state machine to POWERUP_WAIT */
     state_id_t state = ST_POWERUP_WAIT;
     on_entry_POWERUP_WAIT();
 
-    /* Start POWERUP timers */
-    k_timer_start(&startup_timeout, K_SECONDS(STARTUP_TIMEOUT_SEC), K_NO_WAIT);
-    k_timer_start(&ui_tick, K_SECONDS(1), K_SECONDS(1));
-
+    /* Main event loop */
     while (1) {
-        if (read_line_nonblock(line_buf, sizeof(line_buf))) {
-            state = ui_handle_line(state, line_buf);
-        }
-
-        event_t e;
-        while (k_msgq_get(&evt_q,&e,K_NO_WAIT)==0) {
-            state_id_t next = state;
-            switch(state) {
-                case ST_POWERUP_WAIT: next=on_event_POWERUP_WAIT(&e); break;
-                case ST_MENU:         next=on_event_MENU(&e); break;
-                case ST_HWTEST_MENU:  next=on_event_HWTEST_MENU(&e); break;
-                case ST_PARAMS_MENU:  next=on_event_PARAMS_MENU(&e); break;
-                case ST_PARAM_INPUT:  next=on_event_PARAM_INPUT(&e); break;
-                case ST_PR_MENU:      next=on_event_PR_MENU(&e); break;
-                case ST_PR_INPUT:     next=on_event_PR_INPUT(&e); break;
-                case ST_PUMP_INPUT:   next=on_event_PUMP_INPUT(&e); break;
-                case ST_RECOVERY:     next=on_event_RECOVERY(&e); break;
-                case ST_DEPLOYED:     next=on_event_DEPLOYED(&e); break;
-                default: break;
-            }
-            if (next!=state) {
-                if (state == ST_POWERUP_WAIT) {
-                    k_timer_stop(&startup_timeout);
-                    k_timer_stop(&ui_tick);
+        /* FIRST: Always try to read input (non-blocking) */
+        bool enter_only = false;
+        if (read_line_nonblock(line_buf, sizeof(line_buf), &enter_only)) {
+            /* User entered text + ENTER */
+            state_id_t new_state = ui_handle_line(state, line_buf);
+            if (new_state != ST__COUNT && new_state != state) {
+                if (state == ST_POWERUP_WAIT) on_exit_POWERUP_WAIT();
+                state = new_state;
+                
+                switch (state) {
+                    case ST_POWERUP_WAIT:
+                        on_entry_POWERUP_WAIT();
+                        break;
+                    case ST_MENU:
+                        on_entry_MENU();
+                        break;
+                    case ST_HWTEST_MENU:
+                        on_entry_HWTEST_MENU();
+                        break;
+                    case ST_PARAMS_MENU:
+                        on_entry_PARAMS_MENU();
+                        break;
+                    case ST_PR_MENU:
+                        on_entry_PR_MENU();
+                        break;
+                    case ST_RECOVERY:
+                        on_entry_RECOVERY();
+                        break;
+                    case ST_DEPLOYED:
+                        on_entry_DEPLOYED();
+                        break;
+                    case ST_COMPASS_MENU:
+                        on_entry_COMPASS_MENU();
+                        break;
+                    default:
+                        break;
                 }
-                state=next;
-                switch(state){
-                    case ST_MENU: on_entry_MENU(); break;
-                    case ST_HWTEST_MENU: on_entry_HWTEST_MENU(); break;
-                    case ST_PARAMS_MENU: on_entry_PARAMS_MENU(); break;
-                    case ST_PR_MENU: on_entry_PR_MENU(); break;
-                    case ST_RECOVERY: on_entry_RECOVERY(); break;
-                    case ST_DEPLOYED: on_entry_DEPLOYED(); break;
-                    default: break;
+            }
+        } else if (enter_only) {
+            /* User pressed just ENTER - post EVT_ENTER event */
+            post_event(EVT_ENTER);
+        }
+        
+        /* SECOND: Check for queued events with very short timeout */
+        event_t event;
+        int ret = k_msgq_get(&evt_q, &event, K_MSEC(10));
+        
+        if (ret == 0) {
+            /* Process event based on current state */
+            state_id_t new_state = ST__COUNT;
+            
+            switch (state) {
+                case ST_POWERUP_WAIT:
+                    new_state = on_event_POWERUP_WAIT(&event);
+                    break;
+                case ST_MENU:
+                    new_state = on_event_MENU(&event);
+                    break;
+                case ST_HWTEST_MENU:
+                    new_state = on_event_HWTEST_MENU(&event);
+                    break;
+                case ST_PARAMS_MENU:
+                    new_state = on_event_PARAMS_MENU(&event);
+                    break;
+                case ST_PARAM_INPUT:
+                    new_state = on_event_PARAM_INPUT(&event);
+                    break;
+                case ST_PR_MENU:
+                    new_state = on_event_PR_MENU(&event);
+                    break;
+                case ST_PR_INPUT:
+                    new_state = on_event_PR_INPUT(&event);
+                    break;
+                case ST_PUMP_INPUT:
+                    new_state = on_event_PUMP_INPUT(&event);
+                    break;
+                case ST_RECOVERY:
+                    new_state = on_event_RECOVERY(&event);
+                    break;
+                case ST_DEPLOYED:
+                    new_state = on_event_DEPLOYED(&event);
+                    break;
+                case ST_COMPASS_MENU:
+                    /* COMPASS_MENU not yet implemented; stay in current state */
+                    new_state = state;
+                    break;
+                default:
+                    break;
+            }
+            
+            /* Transition to new state if needed */
+            if (new_state != ST__COUNT && new_state != state) {
+                if (state == ST_POWERUP_WAIT) on_exit_POWERUP_WAIT();
+                
+                state = new_state;
+                
+                switch (state) {
+                    case ST_POWERUP_WAIT:
+                        on_entry_POWERUP_WAIT();
+                        break;
+                    case ST_MENU:
+                        on_entry_MENU();
+                        break;
+                    case ST_HWTEST_MENU:
+                        on_entry_HWTEST_MENU();
+                        break;
+                    case ST_PARAMS_MENU:
+                        on_entry_PARAMS_MENU();
+                        break;
+                    case ST_PR_MENU:
+                        on_entry_PR_MENU();
+                        break;
+                    case ST_RECOVERY:
+                        on_entry_RECOVERY();
+                        break;
+                    case ST_DEPLOYED:
+                        on_entry_DEPLOYED();
+                        break;
+                    case ST_COMPASS_MENU:
+                        on_entry_COMPASS_MENU();
+                        break;
+                    default:
+                        break;
                 }
             }
         }
-        k_sleep(K_MSEC(5));
     }
 }

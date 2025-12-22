@@ -1,7 +1,7 @@
 #ifndef APP_LIMITS_H
 #define APP_LIMITS_H
 
-#define STARTUP_TIMEOUT_SEC   60
+#define STARTUP_TIMEOUT_SEC   600
 #define UI_TICK_HZ            1
 
 /* Avoid clashing with libc's LINE_MAX */

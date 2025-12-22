@@ -8,13 +8,13 @@
 #include <stdbool.h>
 
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(uart0), okay)
-static const struct device *const uart0_dev = DEVICE_DT_GET(DT_NODELABEL(uart0));
+static const struct device *const uart0_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(uart0));
 #else
 static const struct device *const uart0_dev = NULL;
 #endif
 
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(uart1), okay)
-static const struct device *const uart1_dev = DEVICE_DT_GET(DT_NODELABEL(uart1));
+static const struct device *const uart1_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(uart1));
 #else
 static const struct device *const uart1_dev = NULL;
 #endif
@@ -84,12 +84,13 @@ int my_putchar(int c) {
 
 static int dual_print_init(const struct device *unused) {
     ARG_UNUSED(unused);
-    uart0_ready = (uart0_dev && device_is_ready(uart0_dev));
-    uart1_ready = (uart1_dev && device_is_ready(uart1_dev));
+    /* Temporarily disable dual UART printing to isolate crash */
+    uart0_ready = false;
+    uart1_ready = false;
     return 0;
 }
 
-/* Use PRE_KERNEL_2 so the UART devices are ready before first printk */
-SYS_INIT(dual_print_init, PRE_KERNEL_2, 99);
+/* Initialize at APPLICATION time to avoid early device readiness issues */
+SYS_INIT(dual_print_init, APPLICATION, 99);
 
 int dual_print_init_hook(void) { return dual_print_init(NULL); }

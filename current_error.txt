@@ -1,0 +1,60 @@
+ENTER received → MENU
+
+
+=== MENU ===
+1) hardware test
+2) deploy
+3) parameters
+Select [1-3]: 1
+1
+-- HARDWARE TEST --
+1) pitch and roll
+2) pump
+3) show positions
+4) Internal Pressure
+5) External Pressure
+6) GPS
+7) Compass
+9) back
+Select [1,2,3,4,5,6,7 or 9]: 4
+[Internal Pressure] BMP180 detected (id=0x55) on i2c0
+[Internal Pressure] streaming — press 'q' then ENTER to return
+T=20.4 C, P=102.600 kPa
+T=20.3 C, P=102.594 kPa
+T=20.3 C, P=102.603 kPa
+qT=20.3 C, P=102.600 kPa
+
+[Internal Pressure] exit requested → back to menu
+7
+7
+-- Compass (HMC6343) --
+1) Calibrate (enter/exit)
+2) Continuous heading (q to quit)
+9) back
+Select [1,2,3,4,5,6,7 or 9]: 2
+[HMC6343] Streaming Heading/Pitch/Roll; press 'q' then ENTER to quit
+Heading=16.2°, Pitch=86.7°, Roll=-81.1°
+Heading=21.4°, Pitch=86.7°, Roll=-79.0°
+q
+[HMC6343] exit requested → back to menu
+5
+Invalid.
+9
+9
+-- HARDWARE TEST --
+1) pitch and roll
+2) pump
+3) show positions
+4) Internal Pressure
+5) External Pressure
+6) GPS
+7) Compass
+9) back
+Select [1,2,3,4,5,6,7 or 9]: 5
+[External Pressure] PROM read failed (-16)
+q
+Invalid.
+4
+[Internal Pressure] BMP180 not found (id=0x00)
+[Internal Pressure] init failed
+x

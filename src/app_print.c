@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdbool.h>
+#include "net_console.h"
 
 /* Mirror only to UART1; console remains whatever Zephyr is configured to use */
 #if DT_NODE_HAS_STATUS(DT_NODELABEL(uart1), okay)
@@ -34,6 +35,8 @@ static int vprint_mirror(const char *fmt, va_list ap) {
     if (n < 0) return n;
     size_t to_send = (n < (int)sizeof(tmp)) ? (size_t)n : sizeof(tmp) - 1;
     uart1_out_buf(tmp, to_send);
+    /* Also mirror to any connected net console clients */
+    net_console_write(tmp, to_send);
     return n;
 }
 
@@ -72,6 +75,7 @@ int app_putchar(int c) {
 
 static int _app_print_init(void) {
     uart1_ready = (uart1_dev && device_is_ready(uart1_dev));
+    net_console_init();
     return 0;
 }
 
