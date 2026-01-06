@@ -5,13 +5,39 @@
 	};
 
 	aliases {
-		/* Motors - PWM or GPIO control */
-		roll-in1 = &roll_in1;
-		roll-in2 = &roll_in2;
-		pitch-in1 = &pitch_in1;
-		pitch-in2 = &pitch_in2;
-		pump-in1 = &pump_in1;
-		pump-in2 = &pump_in2;
+		/* Motors - GPIO control (hyphenated names per devicetree spec) */
+		roll-in1 = &roll_in_1;
+		roll-in2 = &roll_in_2;
+		pitch-in1 = &pitch_in_1;
+		pitch-in2 = &pitch_in_2;
+		pump-in1 = &pump_in_1;
+		pump-in2 = &pump_in_2;
+	};
+
+	/* GPIO alias nodes - must be valid GPIO references */
+	roll_in_1: gpio-roll-in1 {
+		compatible = "gpio-leds";
+		gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
+	};
+	roll_in_2: gpio-roll-in2 {
+		compatible = "gpio-leds";
+		gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>;
+	};
+	pitch_in_1: gpio-pitch-in1 {
+		compatible = "gpio-leds";
+		gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;
+	};
+	pitch_in_2: gpio-pitch-in2 {
+		compatible = "gpio-leds";
+		gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
+	};
+	pump_in_1: gpio-pump-in1 {
+		compatible = "gpio-leds";
+		gpios = <&gpio0 18 GPIO_ACTIVE_HIGH>;
+	};
+	pump_in_2: gpio-pump-in2 {
+		compatible = "gpio-leds";
+		gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -94,35 +120,7 @@
 	};
 };
 
-/* ===== GPIO CONFIGURATION ===== */
-/* GPIO pins for motors and pump are configured at runtime */
-/* Roll motors: GPIO 5, 6 */
-/* Pitch motors: GPIO 7, 8 */  
-/* Pump: GPIO 2, 4 (available on ESP32-WROOM) */
-
-/ {
-	gpio_aliases {
-		compatible = "gpio-leds";
-		roll_in1: roll-in1 {
-			gpios = <&gpio0 5 0>;
-		};
-		roll_in2: roll-in2 {
-			gpios = <&gpio0 6 0>;
-		};
-		pitch_in1: pitch-in1 {
-			gpios = <&gpio0 7 0>;
-		};
-		pitch_in2: pitch-in2 {
-			gpios = <&gpio0 8 0>;
-		};
-		pump_in1: pump-in1 {
-			gpios = <&gpio0 2 0>;
-		};
-		pump_in2: pump-in2 {
-			gpios = <&gpio0 4 0>;
-		};
-	};
-};
+/* (alias nodes are now defined in the top-level root block) */
 
 /* ===== WiFi Configuration ===== */
 

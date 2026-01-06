@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* WiFi support for Pico W */
+/* WiFi AP console (ESP32 DevKitC) */
 #ifdef CONFIG_WIFI
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_mgmt.h>
@@ -180,6 +180,30 @@ enum motor_id current_motor = MOTOR_ROLL;
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
 
+/* File-scope WiFi event logger */
+static void wifi_event_handler(struct net_mgmt_event_callback *cb, uint64_t event, struct net_if *iface)
+{
+    ARG_UNUSED(cb);
+    switch (event) {
+    case NET_EVENT_IF_UP:
+        app_printk("WiFi: IF UP\r\n");
+        break;
+    case NET_EVENT_IF_DOWN:
+        app_printk("WiFi: IF DOWN\r\n");
+        break;
+    case NET_EVENT_IPV4_ADDR_ADD:
+        app_printk("WiFi: IPv4 address added\r\n");
+        break;
+    case NET_EVENT_IPV4_ADDR_DEL:
+        app_printk("WiFi: IPv4 address removed\r\n");
+        break;
+    default:
+        app_printk("WiFi: net event 0x%08x\r\n", event);
+        break;
+    }
+    ARG_UNUSED(iface);
+}
+
 static void wifi_ap_task(void *p1, void *p2, void *p3)
 {
     ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
@@ -198,18 +222,18 @@ static void wifi_ap_task(void *p1, void *p2, void *p3)
     
     app_printk("WiFi: Default interface obtained\r\n");
     
-    /* Try to configure WiFi AP mode */
+    /* Try to configure WiFi AP mode using wifi_ap_config */
     app_printk("WiFi: Attempting to enable AP mode...\r\n");
-    
-    struct wifi_connect_req_params connect_params = {
+
+    struct wifi_connect_req_params ap_cfg = {
         .ssid = (uint8_t *)"Tuba-Glider",
         .ssid_length = 11,
         .channel = 6,
         .security = WIFI_SECURITY_TYPE_NONE,
     };
-    
+
     int status = net_mgmt(NET_REQUEST_WIFI_AP_ENABLE, iface, 
-                         &connect_params, sizeof(connect_params));
+                          &ap_cfg, sizeof(ap_cfg));
     
     app_printk("WiFi: AP enable returned status: %d\r\n", status);
     
@@ -239,13 +263,19 @@ static void wifi_ap_task(void *p1, void *p2, void *p3)
     
     app_printk("WiFi: AP 'Tuba-Glider' is broadcasting on channel 6\r\n");
     
-    /* Set static IP address manually */
+    /* Set static IP address manually (idempotent) */
     struct in_addr addr;
     addr.s_addr = htonl(0xc0a80401);  /* 192.168.4.1 */
     
     app_printk("WiFi: Setting IP address to 192.168.4.1...\r\n");
-    int ret = net_if_ipv4_addr_add(iface, &addr, NET_ADDR_MANUAL, 0);
-    app_printk("WiFi: net_if_ipv4_addr_add returned: %d\r\n", ret);
+    struct net_if *tmp_iface = NULL;
+    struct net_if_addr *ifa_lookup = net_if_ipv4_addr_lookup(&addr, &tmp_iface);
+    if (!ifa_lookup) {
+        struct net_if_addr *ifa = net_if_ipv4_addr_add(iface, &addr, NET_ADDR_MANUAL, 0);
+        app_printk("WiFi: net_if_ipv4_addr_add %s\r\n", ifa ? "OK" : "ERR");
+    } else {
+        app_printk("WiFi: IPv4 address already present\r\n");
+    }
     
     /* Set netmask (255.255.255.0) */
     struct in_addr netmask;
@@ -257,6 +287,13 @@ static void wifi_ap_task(void *p1, void *p2, void *p3)
     app_printk("WiFi: Interface name: %s\r\n", net_if_get_device(iface)->name);
     
     app_printk("WiFi: Setup complete, awaiting connections on 192.168.4.1\r\n");
+
+    /* Register net_mgmt event logging for interface/IP changes */
+    static struct net_mgmt_event_callback wifi_cb;
+    uint64_t mask = NET_EVENT_IF_UP | NET_EVENT_IF_DOWN |
+                    NET_EVENT_IPV4_ADDR_ADD | NET_EVENT_IPV4_ADDR_DEL;
+    net_mgmt_init_event_callback(&wifi_cb, wifi_event_handler, mask);
+    net_mgmt_add_event_callback(&wifi_cb);
     
     /* Try to bind a UDP socket to verify network stack */
     app_printk("WiFi: Testing network stack with UDP socket...\r\n");
@@ -283,15 +320,44 @@ static void wifi_ap_task(void *p1, void *p2, void *p3)
         zsock_close(sock);
     }
     
-    /* WiFi monitoring enabled but quiet: avoid spamming status logs */
+    /* WiFi watchdog: periodically ensure interface/AP/IP stays up */
+    int down_count = 0;
+    bool ap_enabled_flag = (status == 0);
     while (1) {
         k_sleep(K_SECONDS(5));
-        /* Optionally, could re-check and recover if interface goes down, but stay silent */
-        (void)iface;
+        if (!net_if_is_up(iface)) {
+            down_count++;
+            app_printk("WiFi: watchdog - IF DOWN (count=%d)\r\n", down_count);
+            net_if_up(iface);
+            k_sleep(K_MSEC(200));
+            if (!net_if_is_up(iface)) {
+                /* Re-enable AP mode */
+                struct wifi_connect_req_params ap_re = {
+                    .ssid = (uint8_t *)"Tuba-Glider",
+                    .ssid_length = 11,
+                    .channel = 6,
+                    .security = WIFI_SECURITY_TYPE_NONE,
+                };
+                int rs = net_mgmt(NET_REQUEST_WIFI_AP_ENABLE, iface,
+                                  &ap_re, sizeof(ap_re));
+                app_printk("WiFi: watchdog - AP enable retry status: %d\r\n", rs);
+                ap_enabled_flag = (rs == 0);
+            }
+            /* Ensure IPv4 address/netmask configured */
+            struct in_addr waddr; waddr.s_addr = htonl(0xc0a80401);
+            struct net_if *tmp2 = NULL;
+            if (!net_if_ipv4_addr_lookup(&waddr, &tmp2)) {
+                (void)net_if_ipv4_addr_add(iface, &waddr, NET_ADDR_MANUAL, 0);
+            }
+            struct in_addr wmask; wmask.s_addr = htonl(0xffffff00);
+            net_if_ipv4_set_netmask(iface, &wmask);
+        } else {
+            down_count = 0;
+        }
     }
 }
 
-K_THREAD_DEFINE(wifi_ap, 1024, wifi_ap_task, NULL, NULL, NULL, 5, 0, 0);
+K_THREAD_DEFINE(wifi_ap, 4096, wifi_ap_task, NULL, NULL, NULL, 5, 0, 0);
 #endif
 
 #ifdef CONFIG_WIFI
@@ -352,6 +418,8 @@ static void tcp_echo_server_task(void *p1, void *p2, void *p3)
             continue;
         }
         app_printk("TCP: Client connected\r\n");
+        /* Enable TCP keepalive for robustness */
+        int ka = 1; (void)zsock_setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka));
         net_console_add(fd);
 
         /* Send a banner so the client sees immediate output */
@@ -359,7 +427,15 @@ static void tcp_echo_server_task(void *p1, void *p2, void *p3)
             "\r\nTuba-Glider WiFi console (echo test)\r\n"
             "Type and press ENTER — your input will echo.\r\n"
             "Note: Serial UART is the primary console; this TCP port is a simple echo.\r\n\r\n";
-        (void)zsock_send(fd, banner, strlen(banner), 0);
+        {
+            int sret = zsock_send(fd, banner, strlen(banner), 0);
+            if (sret < 0) {
+                app_printk("TCP: send banner failed (%d)\r\n", sret);
+                zsock_close(fd);
+                net_console_remove(fd);
+                continue;
+            }
+        }
 
         char buf[128];
         while (1) {
@@ -369,7 +445,11 @@ static void tcp_echo_server_task(void *p1, void *p2, void *p3)
             for (int i = 0; i < n; i++) {
                 if (buf[i] == '\n') buf[i] = '\r';
             }
-            (void)zsock_send(fd, buf, n, 0);
+            int sret = zsock_send(fd, buf, n, 0);
+            if (sret < 0) {
+                app_printk("TCP: send failed (%d)\r\n", sret);
+                break;
+            }
             /* Feed incoming bytes into net-console input aggregator */
             extern void net_console_ingest_bytes(const char *buf, size_t len);
             net_console_ingest_bytes(buf, n);
@@ -381,7 +461,7 @@ static void tcp_echo_server_task(void *p1, void *p2, void *p3)
 }
 
 /* Increase stack to avoid overflow during socket I/O and formatting */
-K_THREAD_DEFINE(tcp_echo, 2048, tcp_echo_server_task, NULL, NULL, NULL, 6, 0, 0);
+K_THREAD_DEFINE(tcp_echo, 4096, tcp_echo_server_task, NULL, NULL, NULL, 6, 0, 0);
 #endif
 
 /* ------------------- Main loop ------------------- */
@@ -401,10 +481,13 @@ void main(void) {
     scan_i2c_buses();
 #endif
 
-    /* Test pump init */
+    /* Init motors & pump */
     printk("Initializing pump...\r\n");
     (void)pump_init();
     printk("Pump initialized\r\n");
+    printk("Initializing motors...\r\n");
+    (void)motors_init();
+    printk("Motors initialized\r\n");
 
     printk("Main loop starting...\r\n");
     k_sleep(K_MSEC(100));
@@ -450,6 +533,9 @@ void main(void) {
                         break;
                     case ST_DEPLOYED:
                         on_entry_DEPLOYED();
+                        break;
+                    case ST_SIMULATE:
+                        on_entry_SIMULATE();
                         break;
                     case ST_COMPASS_MENU:
                         on_entry_COMPASS_MENU();
@@ -501,6 +587,9 @@ void main(void) {
                     break;
                 case ST_DEPLOYED:
                     new_state = on_event_DEPLOYED(&event);
+                    break;
+                case ST_SIMULATE:
+                    new_state = on_event_SIMULATE(&event);
                     break;
                 case ST_COMPASS_MENU:
                     /* COMPASS_MENU not yet implemented; stay in current state */

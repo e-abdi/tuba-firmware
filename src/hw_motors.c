@@ -12,33 +12,33 @@
  * No enable pins required; H-bridges are always enabled via external pull-ups.
  */
 
-#define HAVE_ROLL_IN1  DT_NODE_HAS_STATUS(DT_ALIAS(roll_in1), okay)
-#define HAVE_ROLL_IN2  DT_NODE_HAS_STATUS(DT_ALIAS(roll_in2), okay)
-#define HAVE_PITCH_IN1 DT_NODE_HAS_STATUS(DT_ALIAS(pitch_in1), okay)
-#define HAVE_PITCH_IN2 DT_NODE_HAS_STATUS(DT_ALIAS(pitch_in2), okay)
+#define HAVE_ROLL_IN1  DT_NODE_HAS_STATUS(DT_ALIAS(roll_in_1), okay)
+#define HAVE_ROLL_IN2  DT_NODE_HAS_STATUS(DT_ALIAS(roll_in_2), okay)
+#define HAVE_PITCH_IN1 DT_NODE_HAS_STATUS(DT_ALIAS(pitch_in_1), okay)
+#define HAVE_PITCH_IN2 DT_NODE_HAS_STATUS(DT_ALIAS(pitch_in_2), okay)
 
 #if !HAVE_ROLL_IN1 || !HAVE_ROLL_IN2 || !HAVE_PITCH_IN1 || !HAVE_PITCH_IN2
 #warning "One or more motor GPIO aliases are missing in the devicetree"
 #endif
 
 #if HAVE_ROLL_IN1
-static const struct gpio_dt_spec ROLL_IN1 = GPIO_DT_SPEC_GET(DT_ALIAS(roll_in1), gpios);
+static const struct gpio_dt_spec ROLL_IN1 = GPIO_DT_SPEC_GET(DT_ALIAS(roll_in_1), gpios);
 #else
 static const struct gpio_dt_spec ROLL_IN1 = {0};
 #endif
 #if HAVE_ROLL_IN2
-static const struct gpio_dt_spec ROLL_IN2 = GPIO_DT_SPEC_GET(DT_ALIAS(roll_in2), gpios);
+static const struct gpio_dt_spec ROLL_IN2 = GPIO_DT_SPEC_GET(DT_ALIAS(roll_in_2), gpios);
 #else
 static const struct gpio_dt_spec ROLL_IN2 = {0};
 #endif
 
 #if HAVE_PITCH_IN1
-static const struct gpio_dt_spec PITCH_IN1 = GPIO_DT_SPEC_GET(DT_ALIAS(pitch_in1), gpios);
+static const struct gpio_dt_spec PITCH_IN1 = GPIO_DT_SPEC_GET(DT_ALIAS(pitch_in_1), gpios);
 #else
 static const struct gpio_dt_spec PITCH_IN1 = {0};
 #endif
 #if HAVE_PITCH_IN2
-static const struct gpio_dt_spec PITCH_IN2 = GPIO_DT_SPEC_GET(DT_ALIAS(pitch_in2), gpios);
+static const struct gpio_dt_spec PITCH_IN2 = GPIO_DT_SPEC_GET(DT_ALIAS(pitch_in_2), gpios);
 #else
 static const struct gpio_dt_spec PITCH_IN2 = {0};
 #endif
@@ -118,6 +118,13 @@ void motor_cmd(enum motor_id id, int dir, uint32_t duration_s)
         (void)motor_all_low(m);
         atomic_clear(&m->running);
         app_printk("[MOTOR] stop\r\n");
+        return;
+    }
+
+    /* Guard: ensure GPIOs were configured */
+    if (!m->io.in1.port || !m->io.in2.port) {
+        app_printk("[MOTOR] GPIO not configured for %s\r\n",
+               (id == MOTOR_ROLL ? "ROLL" : "PITCH"));
         return;
     }
 

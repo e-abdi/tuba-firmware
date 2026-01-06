@@ -2,6 +2,7 @@
 
 ## One-Command Mode Switching
 
+### Note: ESP32 DevKitC is the current target. See `boards/esp32_devkitc_procpu.overlay` for console routing.
 ### Mode 1: USB CDC ACM (Current Default)
 
 **Configuration:**
@@ -24,15 +25,15 @@ picocom /dev/ttyACM0 115200
 **Access:** USB cable only
 
 ---
-
+zephyr,console = &cdc_acm_uart;  # Keep USB as fallback
 ### Mode 2: UART Serial (MAX3232)
 
 **Configuration:**
 ```bash
 # In prj.conf:
 CONFIG_SERIAL=y
-CONFIG_UART_INTERRUPT_DRIVEN=y
-
+west build -b esp32_devkitc_wroom && west flash
+picocom /dev/ttyUSB0 9600
 # In boards/rpi_pico.overlay:
 zephyr,console = &uart0;
 ```
@@ -55,8 +56,8 @@ picocom /dev/ttyUSB0 115200  # or /dev/ttyS0 depending on MAX3232 connection
 ```bash
 # In prj.conf - UNCOMMENT these lines:
 CONFIG_WIFI=y
-CONFIG_WIFI_CYWIP=y
-CONFIG_NET_SOCKETS=y
+west build -b esp32_devkitc_wroom && west flash
+picocom /dev/ttyUSB0 9600
 CONFIG_NET_TCP=y
 CONFIG_NET_IPV4=y
 CONFIG_NET_DHCPV4=y
@@ -87,13 +88,13 @@ nc 192.168.1.100 9000
 ---
 
 ## Platform Compatibility
-
+west build -b esp32_devkitc_wroom && west flash
 | Mode | Pico | Pico W | Pico 2 |
 |------|------|--------|--------|
-| USB | ✅ | ✅ | ✅ |
+picocom /dev/ttyUSB0 9600
 | UART | ✅ | ✅ | ✅ |
 | WiFi | ❌ | ✅ | ❌* |
-
+telnet 192.168.4.1 23
 *Pico 2 may have WiFi variant in future
 
 ---
@@ -117,7 +118,7 @@ To change modes:
 ```bash
 # Method 1: Router DHCP client list (most reliable)
 192.168.1.1  # Navigate to your router admin page
-
+- [ ] Edit `boards/esp32_devkitc_procpu.overlay` (set correct console device)
 # Method 2: Network scanner
 nmap -sn 192.168.1.0/24
 
@@ -130,13 +131,13 @@ dns-sd -B _services._dns-sd._udp local
 # netcat (most common)
 nc <pico-ip> 9000
 
-# telnet
+telnet 192.168.4.1 23
 telnet <pico-ip> 9000
 
-# socat (piping to file)
+nc 192.168.4.1 23
 socat - TCP:<pico-ip>:9000 | tee wifi_console.log
 
-# Python
+socat - TCP:192.168.4.1:23 | tee wifi_console.log
 python3 -c "import socket; s = socket.socket(); s.connect(('<pico-ip>', 9000)); print(s.recv(1024))"
 ```
 
@@ -147,7 +148,7 @@ picocom /dev/ttyACM0 115200
 
 # miniterm.py
 python3 -m serial.tools.miniterm /dev/ttyACM0 115200
-
+west build -b esp32_devkitc_wroom -- -v  # Verbose Ninja
 # minicom
 minicom -D /dev/ttyACM0 -b 115200
 
@@ -158,26 +159,26 @@ screen /dev/ttyACM0 115200
 ### Build with Verbose Output
 ```bash
 west build -b rpi_pico -- -v  # Verbose Ninja
-west build -b rpi_pico -- -d explain  # Explain build rules
+west build -b esp32_devkitc_wroom && west flash
 ```
 
 ---
 
 ## Typical Workflow
-
+telnet 192.168.4.1 23
 ### Development (USB + WiFi)
 ```bash
-# Build once with both enabled
+west build -b esp32_devkitc_wroom  # Rebuild as needed
 vi prj.conf  # Uncomment WiFi section
 west build -b rpi_pico && west flash
 
 # Terminal 1: USB debug console
 picocom /dev/ttyACM0 115200
 
-# Terminal 2: WiFi remote console
+west build -b esp32_devkitc_wroom && west flash
 nc <pico-ip> 9000
 
-# Terminal 3: Build monitor
+telnet 192.168.4.1 23
 west build -b rpi_pico  # Rebuild as needed
 ```
 
@@ -185,7 +186,7 @@ west build -b rpi_pico  # Rebuild as needed
 ```bash
 # Build with USB disabled, WiFi only
 vi prj.conf  # Disable USB, keep WiFi enabled
-west build -b rpi_pico && west flash
+west build -b esp32_devkitc_wroom && west flash
 
 # Remote access from any device on network
 nc <pico-ip> 9000
@@ -198,7 +199,7 @@ nc <pico-ip> 9000
 vi prj.conf  # Enable UART, disable USB/WiFi
 west build -b rpi_pico && west flash
 
-# Connect serial console
+├── boards/esp32_devkitc_procpu.overlay           ← Edit for console routing
 picocom /dev/ttyUSB0 115200
 ```
 
@@ -221,7 +222,7 @@ picocom /dev/ttyUSB0 115200
 ## Troubleshooting Quick Links
 
 | Problem | Solution | Reference |
-|---------|----------|-----------|
+**Board**: ESP32 DevKitC (WROOM-32U)  
 | Build fails | Check `CONFIG_HEAP_MEM_POOL_SIZE` | WIFI_CONFIG_CHECKLIST.md |
 | USB not recognized | Try different USB port/cable | WIFI_CONSOLE_README.md |
 | WiFi not connecting | Check credentials, signal strength | WIFI_CONSOLE_README.md § Troubleshooting |

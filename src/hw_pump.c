@@ -5,13 +5,13 @@
 #include "hw_pump.h"
 
 /* --- Devicetree bindings for Pump --- */
-#define HAVE_PUMP_IN1 DT_NODE_HAS_STATUS(DT_ALIAS(pump_in1), okay)
-#define HAVE_PUMP_IN2 DT_NODE_HAS_STATUS(DT_ALIAS(pump_in2), okay)
+#define HAVE_PUMP_IN1 DT_NODE_HAS_STATUS(DT_ALIAS(pump_in_1), okay)
+#define HAVE_PUMP_IN2 DT_NODE_HAS_STATUS(DT_ALIAS(pump_in_2), okay)
 #define PUMP_SUPPORTED (HAVE_PUMP_IN1 && HAVE_PUMP_IN2)
 
 #if PUMP_SUPPORTED
-static const struct gpio_dt_spec gpio_pump_in1 = GPIO_DT_SPEC_GET(DT_ALIAS(pump_in1), gpios);
-static const struct gpio_dt_spec gpio_pump_in2 = GPIO_DT_SPEC_GET(DT_ALIAS(pump_in2), gpios);
+static const struct gpio_dt_spec gpio_pump_in1 = GPIO_DT_SPEC_GET(DT_ALIAS(pump_in_1), gpios);
+static const struct gpio_dt_spec gpio_pump_in2 = GPIO_DT_SPEC_GET(DT_ALIAS(pump_in_2), gpios);
 
 struct pump_ctx {
     const struct gpio_dt_spec *in1;

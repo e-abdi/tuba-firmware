@@ -2,7 +2,7 @@
 
 ## Status: ✅ Complete
 
-WiFi socket console support has been successfully added to the Tuba AUV firmware for Raspberry Pi Pico W.
+WiFi AP + telnet console support has been successfully added to the Tuba AUV firmware for ESP32 DevKitC (WROOM-32U).
 
 ## What Was Implemented
 
@@ -18,7 +18,7 @@ WiFi socket console support has been successfully added to the Tuba AUV firmware
 ```
 
 #### WiFi Socket Server Task (Lines 136-200)
-- Creates a TCP socket listening on port 9000
+- Creates a TCP telnet server listening on port 23
 - Waits for WiFi network to be ready (2-second startup delay)
 - Accepts incoming connections from remote clients
 - Stores socket file descriptor for data transmission
@@ -53,8 +53,8 @@ static void wifi_console_write(const char *buf, size_t len)
 #### `prj.conf` Updates (Nov 23 - Dec 5)
 Added complete WiFi configuration section with clear documentation:
 ```ini
-# Option 3: WiFi Socket Console (Pico W only)
-# Uncomment all following lines to enable WiFi socket console on port 9000
+# Option 3: WiFi Telnet Console (ESP32 AP)
+# Uncomment WiFi section in `prj.conf` to enable AP + telnet on port 23
 # CONFIG_WIFI=y
 # CONFIG_WIFI_CYWIP=y
 # CONFIG_NET_SOCKETS=y
@@ -67,7 +67,7 @@ Added complete WiFi configuration section with clear documentation:
 # CONFIG_HEAP_MEM_POOL_SIZE=16384
 ```
 
-#### `boards/rpi_pico.overlay` Updates (Dec 5)
+#### `boards/esp32_devkitc_procpu.overlay` Updates
 Added console mode documentation:
 ```
 /* Console routing (choose one) */
@@ -106,7 +106,7 @@ Quick-reference implementation guide with:
 2. **Parameters load** from flash (persistent storage)
 3. **WiFi config check** → if `CONFIG_WIFI_CYWIP=y`, WiFi stack initializes
 4. **WiFi thread starts** → waits 2 seconds for network
-5. **Socket server creates** → binds to 0.0.0.0:9000, listens
+5. **Telnet server creates** → binds to 0.0.0.0:23, listens
 6. **Main loop begins** → state machine processes commands
 
 ### Data Flow
@@ -127,7 +127,7 @@ User Input (USB)              User Input (WiFi)
 ## Features
 
 ✅ **Console Mode Switching**: Three modes easily toggled via config comments  
-✅ **TCP Socket Server**: Listens on port 9000, accepts multiple connections (sequential)  
+✅ **TCP Telnet Server**: Listens on port 23, accepts connections (sequential)  
 ✅ **Non-blocking I/O**: 100ms polling interval ensures main state machine unaffected  
 ✅ **Error Handling**: Graceful handling of failed socket operations  
 ✅ **Backward Compatible**: USB console works unchanged; WiFi is optional addition  
@@ -143,9 +143,9 @@ User Input (USB)              User Input (WiFi)
 
 ### To Enable WiFi
 1. Uncomment WiFi config section in `prj.conf` (8 lines)
-2. Rebuild: `west build -b rpi_pico`
+2. Rebuild: `west build -b esp32_devkitc_wroom`
 3. Flash: `west flash`
-4. Find Pico IP, connect: `nc <ip> 9000`
+4. Connect to ESP32 AP: `telnet 192.168.4.1 23`
 
 ## Limitations & Future Work
 
@@ -172,7 +172,7 @@ User Input (USB)              User Input (WiFi)
 |------|---------|--------|
 | `src/main.c` | Added WiFi includes, socket server task, boot message | ✅ Complete |
 | `prj.conf` | Added WiFi config section (commented) | ✅ Complete |
-| `boards/rpi_pico.overlay` | Added console mode documentation | ✅ Complete |
+| `boards/esp32_devkitc_procpu.overlay` | Added console + AP documentation | ✅ Complete |
 | `WIFI_CONSOLE_README.md` | New documentation file | ✅ Complete |
 | `WIFI_CONFIG_CHECKLIST.md` | New configuration guide | ✅ Complete |
 
@@ -188,14 +188,14 @@ User Input (USB)              User Input (WiFi)
 
 ### Build Without WiFi (Default)
 ```bash
-west build -b rpi_pico
+west build -b esp32_devkitc_wroom
 # Result: ~200KB binary, USB console works
 ```
 
 ### Build With WiFi
 ```bash
 # Edit prj.conf, uncomment WiFi section
-west build -b rpi_pico
+west build -b esp32_devkitc_wroom
 # Result: ~450KB binary, USB + WiFi console works
 ```
 
@@ -207,12 +207,12 @@ west build -b rpi_pico
 === Initialization Complete ===
 WiFi enabled: Waiting for network setup...
 [5 seconds later...]
-WiFi console server listening on port 9000
+WiFi telnet server listening on port 23
 ```
 
 **Remote Connection:**
 ```bash
-$ nc 192.168.1.100 9000
+$ telnet 192.168.4.1 23
 [At this point, user can type commands]
 help
 [Output shows menu - works!]
@@ -259,10 +259,10 @@ When WiFi **enabled**:
 ### Phase 4: WiFi Connection
 - [ ] WiFi associates with network
 - [ ] DHCP obtains IP address
-- [ ] Socket server binds to port 9000
+- [ ] Telnet server binds to port 23
 
 ### Phase 5: Remote Access
-- [ ] Client can connect via `nc <ip> 9000`
+- [ ] Client can connect via `telnet 192.168.4.1 23`
 - [ ] Commands execute over WiFi
 - [ ] Output appears on WiFi console
 - [ ] Disconnect/reconnect works
@@ -285,7 +285,7 @@ When WiFi **enabled**:
 
 **Implementation Date**: December 5, 2025  
 **Developer**: GitHub Copilot  
-**Board**: Raspberry Pi Pico W  
+**Board**: ESP32 DevKitC (WROOM-32U)  
 **RTOS**: Zephyr v4.2.0+  
 **Platform**: Linux  
 **Status**: ✅ Ready for Testing

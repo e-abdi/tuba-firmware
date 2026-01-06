@@ -214,3 +214,80 @@ void gps_fix_interactive(void)
     }
 }
 
+/* Non-interactive GPS fix for deploy/simulate: 
+ * Blocks for up to timeout_sec seconds waiting for a valid fix.
+ * Returns true if fix acquired, false on timeout.
+ */
+bool gps_fix_wait(int timeout_sec)
+{
+    if (i2c_dev == NULL || !device_is_ready(i2c_dev)) {
+        k_sleep(K_MSEC(200));
+        if (i2c_dev == NULL || !device_is_ready(i2c_dev)) {
+            app_printk("[GPS] i2c0 not ready - skipping GPS fix\r\n");
+            return false;
+        }
+    }
+
+    app_printk("[GPS] acquiring fix (timeout %ds)...", timeout_sec);
+    
+    uint8_t buf[BURST_MAX];
+    char line[256];
+    size_t llen = 0;
+    int64_t start = k_uptime_get();
+    int64_t last_tick = start;
+
+    while (1) {
+        int64_t now = k_uptime_get();
+        if (now - start >= (int64_t)timeout_sec * 1000) {
+            app_printk(" timeout\r\n");
+            return false;  /* Timeout */
+        }
+
+        uint16_t avail = 0;
+        if (ublox_len(&avail) != 0) {
+            k_sleep(K_MSEC(50));
+            continue;
+        }
+        while (avail > 0) {
+            size_t chunk = (avail > BURST_MAX) ? BURST_MAX : avail;
+            if (ublox_read(buf, chunk) != 0) {
+                break;
+            }
+            for (size_t i = 0; i < chunk; i++) {
+                char c = (char)buf[i];
+                if (c == '\n' || c == '\r') {
+                    if (llen > 0) {
+                        line[llen] = '\0';
+                        char status;
+                        double lat=0, lon=0;
+                        bool has_coords=false;
+                        if (parse_rmc(line, &status, &lat, &lon, &has_coords)) {
+                            if (status == 'A' && has_coords &&
+                                lat >= -90.0 && lat <= 90.0 &&
+                                lon >= -180.0 && lon <= 180.0) {
+                                app_printk(" acquired (%.6f, %.6f)\r\n", lat, lon);
+                                return true;  /* Fix acquired */
+                            }
+                        }
+                        llen = 0;
+                    }
+                } else if ((unsigned char)c >= 32 && (unsigned char)c < 127) {
+                    if (llen < sizeof(line)-1) {
+                        line[llen++] = c;
+                    } else {
+                        llen = 0; /* too long, resync */
+                    }
+                }
+            }
+            avail -= chunk;
+
+            now = k_uptime_get();
+            if (now - last_tick >= 1000) {
+                app_printk(".");
+                last_tick = now;
+            }
+        }
+        k_sleep(K_MSEC(5));
+    }
+}
+

@@ -37,10 +37,11 @@ void on_exit_POWERUP_WAIT(void){ app_printk("\r\n"); }
 
 void on_entry_MENU(void){
     app_printk("\r\n=== MENU ===\r\n");
-    app_printk("1) hardware test\r\n");
-    app_printk("2) deploy\r\n");
-    app_printk("3) parameters\r\n");
-    app_printk("Select [1-3]: ");
+    app_printk("1) parameters\r\n");
+    app_printk("2) hardware test\r\n");
+    app_printk("3) simulate\r\n");
+    app_printk("4) deploy\r\n");
+    app_printk("Select [1-4]: ");
 }
 
 void on_entry_PARAMS_MENU(void){
@@ -75,8 +76,8 @@ void on_entry_HWTEST_MENU(void){
     app_printk("5) External Pressure\r\n");
     app_printk("6) GPS\r\n");
     app_printk("7) Compass\r\n");
-    app_printk("9) back\r\n");
-    app_printk("Select [1,2,3,4,5,6,7 or 9]: ");
+    app_printk("x) back\r\n");
+    app_printk("Select [1-7,x]: ");
 }
 
 
@@ -84,23 +85,33 @@ void on_entry_COMPASS_MENU(void){
     app_printk("\r\n-- Compass (HMC6343) --\r\n");
     app_printk("1) Calibrate (enter/exit)\r\n");
     app_printk("2) Continuous heading (q to quit)\r\n");
-    app_printk("9) back\r\n");
-    app_printk("Select [1,2,3,4,5,6,7 or 9]: ");
+    app_printk("x) back\r\n");
+    app_printk("Select [1,2,x]: ");
 }
 
 void on_entry_PR_MENU(void){
     app_printk("\r\n-- Pitch & Roll --\r\n");
     app_printk("1) roll\r\n");
     app_printk("2) pitch\r\n");
-    app_printk("9) back\r\n");
-    app_printk("Select [1,2,3,4,5,6,7 or 9]: ");
+    app_printk("x) back\r\n");
+    app_printk("Select [1,2,x]: ");
 }
 
 void on_entry_RECOVERY(void){
     app_printk("\r\n-- RECOVERY state --\r\n");
     app_printk("Type 'resume' to go to DEPLOYED.\r\n");
 }
-void on_entry_DEPLOYED(void){ app_printk("\r\n== DEPLOYED state ==\r\n"); deploy_start(); }
+void on_entry_DEPLOYED(void){
+    app_printk("\r\n== DEPLOYED state ==\r\n");
+    /* Run deploy asynchronously to keep UI and networking responsive */
+    deploy_start_async();
+}
+
+void on_entry_SIMULATE(void){
+    app_printk("\r\n== SIMULATE state (lab testing with simulated pressure) ==\r\n");
+    /* Run simulate asynchronously to keep UI and networking responsive */
+    simulate_start_async();
+}
 
 /* --- Event handlers (unchanged skeleton) --- */
 state_id_t on_event_POWERUP_WAIT(const event_t *e){
@@ -133,7 +144,20 @@ state_id_t on_event_PR_MENU(const event_t *e){ return ST_PR_MENU; }
 state_id_t on_event_PR_INPUT(const event_t *e){ return ST_PR_INPUT; }
 state_id_t on_event_PUMP_INPUT(const event_t *e){ return ST_PUMP_INPUT; }
 state_id_t on_event_RECOVERY(const event_t *e){ return ST_RECOVERY; }
-state_id_t on_event_DEPLOYED(const event_t *e){ return ST_DEPLOYED; }
+state_id_t on_event_DEPLOYED(const event_t *e){
+    /* Check if deploy has completed (thread no longer running) */
+    if (!deploy_is_running()) {
+        return ST_MENU;
+    }
+    return ST_DEPLOYED;
+}
+state_id_t on_event_SIMULATE(const event_t *e){
+    /* Check if simulate has completed (thread no longer running) */
+    if (!simulate_is_running()) {
+        return ST_MENU;
+    }
+    return ST_SIMULATE;
+}
 
 /* --- Line handler --- */
 state_id_t ui_handle_line(state_id_t state, const char *line){
@@ -142,10 +166,28 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
         return ST__COUNT;  /* No state change */
     }
     
+    /* Check if deploy/simulate has completed (worker thread no longer running) */
+    if (state == ST_DEPLOYED && !deploy_is_running()) {
+        return ST_MENU;
+    }
+    if (state == ST_SIMULATE && !simulate_is_running()) {
+        return ST_MENU;
+    }
+    
     if (state==ST_MENU){
-        if(line[0]=='1') return ST_HWTEST_MENU;
-        if(line[0]=='2') return ST_DEPLOYED;
-        if(line[0]=='3') return ST_PARAMS_MENU;
+        if(line[0]=='1') return ST_PARAMS_MENU;
+        if(line[0]=='2') return ST_HWTEST_MENU;
+        if(line[0]=='3') return ST_SIMULATE;
+        if(line[0]=='4') {
+            /* Check if deploy sensor is available before transitioning to DEPLOYED */
+            if (!deploy_check_sensor_available()) {
+                app_printk("[DEPLOY] ERROR: external pressure sensor not available\r\n");
+                app_printk("[DEPLOY] Try option 3 (simulate) instead\r\n");
+                on_entry_MENU();
+                return ST_MENU;
+            }
+            return ST_DEPLOYED;
+        }
         /* Invalid input - stay in same state, print error, no state entry call */
         app_printk("Invalid.\r\n");
         return ST_MENU;
@@ -160,21 +202,24 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
             long pump  = (long)pump_get_position_sec();
             app_printk("\r\n[POSITION] roll=%lds, pitch=%lds, pump=%lds\r\n",
                        roll, pitch, pump);
+            on_entry_HWTEST_MENU();
             return ST_HWTEST_MENU;
         }
         if(line[0]=='4') {
             /* BMP180 stream (blocking; returns when user hits 'q') */
             bmp180_stream_interactive();
+            on_entry_HWTEST_MENU();
             return ST_HWTEST_MENU;
         }
         if(line[0]=='5') {
             /* MS5837 stream (blocking; returns when user hits 'q') */
             ms5837_stream_interactive();
+            on_entry_HWTEST_MENU();
             return ST_HWTEST_MENU;
         }
-        if(line[0]=='6') { gps_fix_interactive(); return ST_HWTEST_MENU; }
+        if(line[0]=='6') { gps_fix_interactive(); on_entry_HWTEST_MENU(); return ST_HWTEST_MENU; }
         if(line[0]=='7') { return ST_COMPASS_MENU; }
-        if(line[0]=='9') { return ST_MENU; }
+        if(line[0]=='x' || line[0]=='X') { return ST_MENU; }
         app_printk("Invalid.\r\n");
         return ST_HWTEST_MENU;
     }
@@ -182,7 +227,7 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
     if (state==ST_PR_MENU){
         if(line[0]=='1'){ current_motor=MOTOR_ROLL;  app_printk("[ROLL] Enter seconds [-10,10], q to quit\r\n> ");  return ST_PR_INPUT; }
         if(line[0]=='2'){ current_motor=MOTOR_PITCH; app_printk("[PITCH] Enter seconds [-10,10], q to quit\r\n> "); return ST_PR_INPUT; }
-        if(line[0]=='9'){ return ST_HWTEST_MENU; }
+        if(line[0]=='x' || line[0]=='X'){ return ST_HWTEST_MENU; }
         app_printk("Invalid.\r\n");
         return ST_PR_MENU;
     }
@@ -206,9 +251,9 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
     }
 
     if (state==ST_COMPASS_MENU){
-        if(line[0]=='1') { hmc6343_user_calibrate_interactive(); return ST_COMPASS_MENU; }
-        if(line[0]=='2') { hmc6343_stream_heading_interactive(); return ST_COMPASS_MENU; }
-        if(line[0]=='9') { return ST_HWTEST_MENU; }
+        if(line[0]=='1') { hmc6343_user_calibrate_interactive(); on_entry_COMPASS_MENU(); return ST_COMPASS_MENU; }
+        if(line[0]=='2') { hmc6343_stream_heading_interactive(); on_entry_COMPASS_MENU(); return ST_COMPASS_MENU; }
+        if(line[0]=='x' || line[0]=='X') { return ST_HWTEST_MENU; }
         app_printk("Invalid.\r\n");
         return ST_COMPASS_MENU;
     }
@@ -216,8 +261,8 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
     if (state==ST_PARAMS_MENU){
         /* navigation */
         if(line[0]=='x' || line[0]=='X'){ return ST_MENU; }
-        if(line[0]=='s' || line[0]=='S'){ app_params_save(); return ST_PARAMS_MENU; }
-        if(line[0]=='r' || line[0]=='R'){ app_params_reset_defaults(); return ST_PARAMS_MENU; }
+        if(line[0]=='s' || line[0]=='S'){ app_params_save(); on_entry_PARAMS_MENU(); return ST_PARAMS_MENU; }
+        if(line[0]=='r' || line[0]=='R'){ app_params_reset_defaults(); on_entry_PARAMS_MENU(); return ST_PARAMS_MENU; }
         /* select parameter to edit */
         if(line[0]=='1'){ current_param_index = 1; app_printk("Enter Dive depth [m]: "); return ST_PARAM_INPUT; }
         if(line[0]=='2'){ current_param_index = 2; app_printk("Enter Wait before dive [s]: "); return ST_PARAM_INPUT; }

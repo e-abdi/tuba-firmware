@@ -15,6 +15,7 @@ typedef enum {
     ST_PUMP_INPUT,
     ST_RECOVERY,
     ST_DEPLOYED,
+    ST_SIMULATE,
     ST_COMPASS_MENU,
     ST__COUNT
 } state_id_t;
