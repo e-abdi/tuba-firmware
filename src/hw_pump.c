@@ -72,26 +72,33 @@ int pump_init(void)
 
 void pump_run(int dir, uint32_t duration_s)
 {
-    if (pump.running) {
+    k_work_cancel_delayable(&pump.stop_work);
+    pump_all_low(&pump);
+
+    if (dir == 0) {
+        app_printk("[PUMP] stopped\r\n");
+        pump.running = false;
         return;
     }
 
-    pump_all_low(&pump);
-    app_printk("[PUMP] running %d for %u sec\r\n", dir, duration_s);
+    app_printk("[PUMP] run %s for %us\r\n",
+               dir > 0 ? "OUT" : "IN",
+               duration_s);
 
-    if (dir == 0) {  /* PUMP_DIR_IN */
-        gpio_pin_set_dt(&gpio_pump_in1, 1);
-    } else if (dir == 1) {  /* PUMP_DIR_OUT */
-        gpio_pin_set_dt(&gpio_pump_in2, 1);
-    } else {
-        return;
+    if (dir > 0) {  /* PUMP_DIR_OUT */
+        gpio_pin_set_dt(pump.in1, 1);
+        gpio_pin_set_dt(pump.in2, 0);
+    } else {  /* PUMP_DIR_IN */
+        gpio_pin_set_dt(pump.in1, 0);
+        gpio_pin_set_dt(pump.in2, 1);
     }
 
     pump.running = true;
-    pump.position_sec = duration_s;
+    pump.position_sec += (dir > 0) ? (int32_t)duration_s : -(int32_t)duration_s;
 
     if (duration_s > 0) {
         k_work_schedule(&pump.stop_work, K_SECONDS(duration_s));
+        app_printk("[PUMP] will auto-stop in %us\r\n", duration_s);
     }
 }
 

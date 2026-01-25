@@ -13,6 +13,7 @@ typedef enum {
     ST_PR_MENU,
     ST_PR_INPUT,
     ST_PUMP_INPUT,
+    ST_LIMIT_TEST,
     ST_RECOVERY,
     ST_DEPLOYED,
     ST_SIMULATE,

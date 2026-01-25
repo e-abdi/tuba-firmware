@@ -228,6 +228,56 @@ simulated_depth = 0.5 * elapsed_seconds  (meters)
 
 ---
 
+## Heading-Based Roll Control
+
+### Automatic Heading Correction
+
+Every **10 seconds** during dive and climb phases, the glider compares its current magnetic heading (from HMC6343 compass) with the desired heading (parameter `desired_heading_deg`):
+
+**Algorithm:**
+1. **Check heading difference**: Calculate `Δheading = desired - current`
+2. **If outside tolerance (±5°)**:
+   - Determine which way to bank based on phase:
+     - **Dive phase**: Bank opposite to turn direction (inverted physics due to pitch-down)
+     - **Climb phase**: Bank normal to turn direction (standard aircraft physics)
+   - Move roll motor to `max_roll_s` position in calculated direction
+   - Prints: `[DEPLOY] roll START: heading=XXX°, desired=YYY° (Δ=ZZZ°), rolling [starboard|port] from 0.0s to 1.0s (duration=1s)`
+3. **If within tolerance (±5°)**:
+   - Return roll motor to `start_roll_s` (neutral position)
+   - Prints: `[DEPLOY] roll END: heading reached (XXX°, within ±5.0° tolerance), returning to neutral roll from 0.5s to 0.0s (duration=1s)`
+
+### Tolerance Window
+
+- **Tolerance**: ±5.0° (configurable as `HEADING_TOLERANCE_DEG`)
+- **Purpose**: Prevent oscillation around desired heading
+- **Behavior**: Once heading enters tolerance window, roll returns to neutral immediately
+- **Result**: Glider naturally drifts back if it overshoots beyond tolerance, creating stable holding pattern
+
+### Example Log Output
+
+```
+[DEPLOY] roll START: heading=210.4°, desired=180.0° (Δ=-30.4°), rolling port from 0.0s to 1.0s (duration=1s)
+[SENS] IntP=102014 Pa, ExtDepth=5.32m, ...
+... (sensor readings while rolling) ...
+[DEPLOY] roll END: heading reached (180.9°, within ±5.0° tolerance), returning to neutral roll from 1.0s to 0.0s (duration=1s)
+```
+
+### Motor Control Details
+
+- **Dive phase roll direction**: 
+  - Positive delta (need right turn) → roll port (negative, -1)
+  - Negative delta (need left turn) → roll starboard (positive, +1)
+- **Climb phase roll direction**:
+  - Positive delta (need right turn) → roll starboard (positive, +1)
+  - Negative delta (need left turn) → roll port (negative, -1)
+
+### Current Configuration
+
+- **Check interval**: 10 seconds
+- **Max roll deflection**: Controlled by `max_roll_s` parameter (default: 1 second)
+- **Neutral roll**: `start_roll_s` parameter (default: 0 seconds)
+- **Heading tolerance**: ±5.0° window for stop condition
+
 ## Sensor Output Format
 
 Every second during diving, one line like this appears:

@@ -18,8 +18,10 @@ static int mirror_putchar(int c)
 
 static int console_mirror_init(void)
 {
-    /* Temporarily disable console mirroring to isolate crash */
-    ARG_UNUSED(uart1_dev);
+    /* Console mirroring not enabled on ESP32 (UART2 GPIO17/16 not configured).
+       On RP2040 with UART1, this would mirror printk to uart1.
+       For now, keep UART0 as the sole console.
+    */
     return 0;
 }
 

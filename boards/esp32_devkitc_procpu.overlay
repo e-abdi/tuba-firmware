@@ -5,39 +5,14 @@
 	};
 
 	aliases {
-		/* Motors - GPIO control (hyphenated names per devicetree spec) */
-		roll-in1 = &roll_in_1;
-		roll-in2 = &roll_in_2;
-		pitch-in1 = &pitch_in_1;
-		pitch-in2 = &pitch_in_2;
-		pump-in1 = &pump_in_1;
-		pump-in2 = &pump_in_2;
-	};
-
-	/* GPIO alias nodes - must be valid GPIO references */
-	roll_in_1: gpio-roll-in1 {
-		compatible = "gpio-leds";
-		gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
-	};
-	roll_in_2: gpio-roll-in2 {
-		compatible = "gpio-leds";
-		gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>;
-	};
-	pitch_in_1: gpio-pitch-in1 {
-		compatible = "gpio-leds";
-		gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;
-	};
-	pitch_in_2: gpio-pitch-in2 {
-		compatible = "gpio-leds";
-		gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
-	};
-	pump_in_1: gpio-pump-in1 {
-		compatible = "gpio-leds";
-		gpios = <&gpio0 18 GPIO_ACTIVE_HIGH>;
-	};
-	pump_in_2: gpio-pump-in2 {
-		compatible = "gpio-leds";
-		gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;
+		/* Motors - GPIO control (hyphens in DTS, converted to underscores in C via DT_ALIAS) */
+		roll-in-1 = &roll_in_1;
+		roll-in-2 = &roll_in_2;
+		pitch-in-1 = &pitch_in_1;
+		pitch-in-2 = &pitch_in_2;
+		pump-in-1 = &pump_in_1;
+		pump-in-2 = &pump_in_2;
+		i2c0 = &i2c0;
 	};
 };
 
@@ -49,28 +24,24 @@
 	current-speed = <9600>;
 };
 
-/* UART1: GPS (TX=GPIO10, RX=GPIO9) */
+/* UART1: Avoid using GPIO9/10 (SPI flash pins) */
 &uart1 {
-	status = "okay";
-	current-speed = <9600>;
-	pinctrl-0 = <&uart1_tx_gpio10 &uart1_rx_gpio9>;
-	pinctrl-names = "default";
+	status = "disabled";
 };
 
-/* UART2: Available for future use (TX=GPIO17, RX=GPIO16) */
+/* UART2: Use for GPS / mirroring (TX=GPIO17, RX=GPIO16)
+   Note: ESP32 UART2 on GPIO17/16 requires runtime GPIO init or boot config.
+   Pinctrl overlay doesn't work reliably; using manual serial polling instead.
+ */
 &uart2 {
 	status = "okay";
-	current-speed = <115200>;
-	pinctrl-0 = <&uart2_tx_gpio17 &uart2_rx_gpio16>;
-	pinctrl-names = "default";
+	current-speed = <9600>;
 };
 
 /* ===== I2C CONFIGURATION ===== */
 /* I2C0 on GPIO21(SDA)/GPIO22(SCL) for sensors */
 &i2c0 {
 	status = "okay";
-	pinctrl-0 = <&i2c0_sda_gpio21 &i2c0_scl_gpio22>;
-	pinctrl-names = "default";
 	clock-frequency = <100000>; /* 100kHz */
 	ms5837_0: ms5837@76 {
 		compatible = "meas,ms5837";
@@ -79,48 +50,40 @@
 	};
 };
 
-/* ===== GPIO CONFIGURATION ===== */
-
 &gpio0 {
 	status = "okay";
 };
 
-/* Motor GPIOs (Roll, Pitch, Pump) */
-&pinctrl {
-	uart1_tx_gpio10: uart1_tx_gpio10 {
-		pads = <10>;
-		function = "uart";
-	};
+/* Note: I2C0 and UART2 pinctrl on ESP32 requires board-specific dtsi edits.
+   Using I2C0 on default ESP32 pins (21/22) and UART2 without pinctrl for now.
+ */
 
-	uart1_rx_gpio9: uart1_rx_gpio9 {
-		pads = <9>;
-		function = "uart";
-	};
+/* ===== GPIO Motor Control Pins ===== */
 
-	uart2_tx_gpio17: uart2_tx_gpio17 {
-		pads = <17>;
-		function = "uart";
-	};
+/ {
+	motor_gpios: motor-gpios {
+		compatible = "gpio-leds";
 
-	uart2_rx_gpio16: uart2_rx_gpio16 {
-		pads = <16>;
-		function = "uart";
-	};
-
-	i2c0_sda_gpio21: i2c0_sda_gpio21 {
-		pads = <21>;
-		function = "i2c";
-		drive-open-drain;
-	};
-
-	i2c0_scl_gpio22: i2c0_scl_gpio22 {
-		pads = <22>;
-		function = "i2c";
-		drive-open-drain;
+		roll_in_1: roll-in-1 {
+			gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
+		};
+		roll_in_2: roll-in-2 {
+			gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>;
+		};
+		pitch_in_1: pitch-in-1 {
+			gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;
+		};
+		pitch_in_2: pitch-in-2 {
+			gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
+		};
+		pump_in_1: pump-in-1 {
+			gpios = <&gpio0 18 GPIO_ACTIVE_HIGH>;
+		};
+		pump_in_2: pump-in-2 {
+			gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;
+		};
 	};
 };
-
-/* (alias nodes are now defined in the top-level root block) */
 
 /* ===== WiFi Configuration ===== */
 

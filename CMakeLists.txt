@@ -13,6 +13,7 @@ target_sources(app PRIVATE
   src/ui_menu.c
   src/hw_motors.c
   src/hw_pump.c
+  src/hw_limit_switches.c
   src/hw_ms5837.c
   src/deploy.c
   src/hw_bmp180.c

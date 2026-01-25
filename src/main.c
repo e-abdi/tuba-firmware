@@ -25,6 +25,7 @@
 #include "ui_menu.h"
 #include "hw_motors.h"
 #include "hw_pump.h"
+#include "hw_limit_switches.h"
 #include "app_params.h"
 
 /* Console UART - using _OR_NULL to avoid crash if not available */
@@ -488,6 +489,9 @@ void main(void) {
     printk("Initializing motors...\r\n");
     (void)motors_init();
     printk("Motors initialized\r\n");
+    printk("Initializing limit switches...\r\n");
+    (void)limit_switches_init();
+    printk("Limit switches initialized\r\n");
 
     printk("Main loop starting...\r\n");
     k_sleep(K_MSEC(100));
@@ -598,6 +602,9 @@ void main(void) {
                 default:
                     break;
             }
+            
+            /* SAFETY: Check and handle any triggered limit switches (motor stop) */
+            limit_switches_check_and_stop();
             
             /* Transition to new state if needed */
             if (new_state != ST__COUNT && new_state != state) {

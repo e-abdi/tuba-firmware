@@ -2,6 +2,7 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/atomic.h>
 #include <stdbool.h>
+#include <math.h>
 
 #include "app_params.h"
 #include "app_print.h"
@@ -17,8 +18,87 @@
 #define SEA_WATER_DENSITY_KG_M3 1025.0
 #define GRAVITY_M_S2 9.80665
 
+/* Heading control constants */
+#define HEADING_CHECK_INTERVAL_SEC 10
+#define HEADING_TOLERANCE_DEG 5.0
+
 /* Flag to signal that deploy/simulate failed and should return to menu */
 static atomic_t return_to_menu_flag = ATOMIC_INIT(0);
+
+/* Helper: Calculate shortest angular distance between two headings (in degrees)
+ * Returns positive for starboard (right) turn, negative for port (left) turn
+ * Range: -180 to +180 */
+static float heading_delta(float current_deg, float desired_deg)
+{
+    float delta = desired_deg - current_deg;
+    while (delta > 180.0f) delta -= 360.0f;
+    while (delta < -180.0f) delta += 360.0f;
+    return delta;
+}
+
+/* Helper: Determine roll direction based on phase and heading delta
+ * dive_phase: true for dive, false for climb
+ * heading_delta: desired - current heading
+ * Returns: motor direction (+1, -1, or 0 for neutral) */
+static int roll_direction_for_phase(bool dive_phase, float hdg_delta)
+{
+    if (hdg_delta > HEADING_TOLERANCE_DEG) {
+        /* Need to turn starboard (right) */
+        if (dive_phase) {
+            return -1;  /* Dive: bank to port (negative roll) to turn starboard */
+        } else {
+            return +1;  /* Climb: bank to starboard (positive roll) to turn starboard */
+        }
+    } else if (hdg_delta < -HEADING_TOLERANCE_DEG) {
+        /* Need to turn port (left) */
+        if (dive_phase) {
+            return +1;  /* Dive: bank to starboard (positive roll) to turn port */
+        } else {
+            return -1;  /* Climb: bank to port (negative roll) to turn port */
+        }
+    }
+    return 0;  /* Heading within tolerance, use neutral roll */
+}
+
+/* Helper: Set roll to target position based on phase and heading
+ * Returns true if roll was changed, false if already at target */
+static bool update_roll_for_heading(bool dive_phase, float current_heading, float desired_heading, struct app_params *p)
+{
+    float hdg_delta = heading_delta(current_heading, desired_heading);
+    int roll_dir = roll_direction_for_phase(dive_phase, hdg_delta);
+    
+    float current_roll = motor_get_position_sec(MOTOR_ROLL);
+    float target_roll = (roll_dir > 0) ? (float)p->max_roll_s : 
+                        (roll_dir < 0) ? -(float)p->max_roll_s : 
+                        (float)p->start_roll_s;
+    float roll_delta = target_roll - current_roll;
+    
+    if (fabsf(roll_delta) > 0.5f) {
+        int dir = (roll_delta > 0) ? +1 : -1;
+        uint32_t duration = (uint32_t)(fabsf(roll_delta) + 0.5f);
+        app_printk("[DEPLOY] roll START: heading=%.1f°, desired=%.1f° (Δ=%.1f°), "
+                   "rolling %s from %.1fs to %.1fs (duration=%us)\r\n",
+                   current_heading, desired_heading, hdg_delta,
+                   roll_dir > 0 ? "starboard" : roll_dir < 0 ? "port" : "neutral",
+                   current_roll, target_roll, duration);
+        motor_run(MOTOR_ROLL, dir, duration);
+        return true;
+    } else if (hdg_delta <= HEADING_TOLERANCE_DEG && hdg_delta >= -HEADING_TOLERANCE_DEG) {
+        /* Heading is within tolerance - return to neutral roll */
+        float neutral_roll = (float)p->start_roll_s;
+        float neutral_delta = neutral_roll - current_roll;
+        if (fabsf(neutral_delta) > 0.5f) {
+            int dir = (neutral_delta > 0) ? +1 : -1;
+            uint32_t duration = (uint32_t)(fabsf(neutral_delta) + 0.5f);
+            app_printk("[DEPLOY] roll END: heading reached (%.1f°, within ±%.1f° tolerance), "
+                       "returning to neutral roll from %.1fs to %.1fs (duration=%us)\r\n",
+                       current_heading, HEADING_TOLERANCE_DEG, current_roll, neutral_roll, duration);
+            motor_run(MOTOR_ROLL, dir, duration);
+            return true;
+        }
+    }
+    return false;
+}
 
 /* Check if external pressure sensor is available */
 bool deploy_check_sensor_available(void)
@@ -30,6 +110,8 @@ bool deploy_check_sensor_available(void)
 /* Single dive/climb cycle */
 static void deploy_dive_cycle(struct app_params *p, double surface_pa)
 {
+    int32_t heading_check_counter = 0;  /* Reused for both dive and climb phases */
+    
     /* Move to surface position (start_pitch and start_pump) */
     float start_pitch_pos_s = motor_get_position_sec(MOTOR_PITCH);
     float start_pump_pos_s = pump_get_position_sec();
@@ -75,6 +157,7 @@ static void deploy_dive_cycle(struct app_params *p, double surface_pa)
     app_printk("[DEPLOY] monitoring sensors while diving to %.1fm\r\n", p->dive_depth_m);
     double temp_c = 0.0, press_kpa = 0.0;
     uint64_t deadline_ms = k_uptime_get() + (uint64_t)p->dive_timeout_min * 60ULL * 1000ULL;
+    heading_check_counter = 0;
 
     while (1) {
         int32_t internal_pa = 0;
@@ -96,6 +179,13 @@ static void deploy_dive_cycle(struct app_params *p, double surface_pa)
 
         app_printk("[SENS] IntP=%d Pa, ExtDepth=%.2fm, H=%.1f,R=%.1f,P=%.1f\r\n",
                    internal_pa, depth_m, head, roll, pitch);
+
+        /* Check heading and adjust roll every HEADING_CHECK_INTERVAL_SEC */
+        heading_check_counter++;
+        if (heading_check_counter >= HEADING_CHECK_INTERVAL_SEC) {
+            heading_check_counter = 0;
+            update_roll_for_heading(true, head, (float)p->desired_heading_deg, p);
+        }
 
         if (depth_m >= (double)p->dive_depth_m) {
             app_printk("[DEPLOY] target depth reached (%.2fm) -> start climb\r\n", depth_m);
@@ -132,6 +222,7 @@ static void deploy_dive_cycle(struct app_params *p, double surface_pa)
 
     /* Monitor climb until surface */
     bool surface_reached = false;
+    heading_check_counter = 0;
     for (int i=0;i<60;i++) {  /* Allow up to 60 seconds for climb monitoring */
         int32_t internal_pa = 0;
         bmp180_read_pa(&internal_pa);
@@ -144,6 +235,13 @@ static void deploy_dive_cycle(struct app_params *p, double surface_pa)
         hmc6343_read(&head,&pitch,&roll);
         app_printk("[SENS] IntP=%d Pa, ExtDepth=%.2fm, H=%.1f,R=%.1f,P=%.1f\r\n",
                    internal_pa, depth_m, head, roll, pitch);
+        
+        /* Check heading and adjust roll every HEADING_CHECK_INTERVAL_SEC */
+        heading_check_counter++;
+        if (heading_check_counter >= HEADING_CHECK_INTERVAL_SEC) {
+            heading_check_counter = 0;
+            update_roll_for_heading(false, head, (float)p->desired_heading_deg, p);
+        }
         
         if (!surface_reached && depth_m < 1.0) {
             surface_reached = true;
@@ -163,6 +261,16 @@ static void deploy_dive_cycle(struct app_params *p, double surface_pa)
                 pump_run(+1, (uint32_t)(pump_to_surface + 0.5f));
             } else if (pump_to_surface < -0.5f) {
                 pump_run(-1, (uint32_t)(-pump_to_surface + 0.5f));
+            }
+            
+            /* Return roll to neutral when reaching surface */
+            float current_roll = motor_get_position_sec(MOTOR_ROLL);
+            float roll_delta = (float)p->start_roll_s - current_roll;
+            if (fabsf(roll_delta) > 0.5f) {
+                int dir = (roll_delta > 0) ? +1 : -1;
+                uint32_t duration = (uint32_t)(fabsf(roll_delta) + 0.5f);
+                motor_run(MOTOR_ROLL, dir, duration);
+                app_printk("[DEPLOY] returning roll to neutral (%.1fs)\r\n", (float)p->start_roll_s);
             }
             
             for (int j=0; j<5; j++) {
@@ -285,6 +393,8 @@ void deploy_start_async(void)
 /* Single simulate dive/climb cycle with simulated depth */
 static void simulate_dive_cycle(struct app_params *p, double surface_pa)
 {
+    int32_t heading_check_counter = 0;  /* Reused for both dive and climb phases */
+    
     /* Move to surface position */
     float start_pitch_pos_s = motor_get_position_sec(MOTOR_PITCH);
     float start_pump_pos_s = pump_get_position_sec();
@@ -329,6 +439,7 @@ static void simulate_dive_cycle(struct app_params *p, double surface_pa)
     /* Simulate dive to target depth at 50 cm/s */
     app_printk("[SIMULATE] diving to %.1fm (simulated pressure at 50cm/s)\r\n", p->dive_depth_m);
     uint64_t dive_start_ms = k_uptime_get();
+    heading_check_counter = 0;
     
     while (1) {
         uint64_t elapsed_ms = k_uptime_get() - dive_start_ms;
@@ -343,6 +454,13 @@ static void simulate_dive_cycle(struct app_params *p, double surface_pa)
 
         app_printk("[SENS] IntP=%d Pa, SimDepth=%.2fm, H=%.1f,R=%.1f,P=%.1f\r\n",
                    internal_pa, simulated_depth_m, head, roll, pitch);
+
+        /* Check heading and adjust roll every HEADING_CHECK_INTERVAL_SEC */
+        heading_check_counter++;
+        if (heading_check_counter >= HEADING_CHECK_INTERVAL_SEC) {
+            heading_check_counter = 0;
+            update_roll_for_heading(true, head, (float)p->desired_heading_deg, p);
+        }
 
         if (simulated_depth_m >= (double)p->dive_depth_m) {
             app_printk("[SIMULATE] target depth reached (%.2fm) -> start climb\r\n", simulated_depth_m);
@@ -374,6 +492,7 @@ static void simulate_dive_cycle(struct app_params *p, double surface_pa)
 
     /* Simulate climb back to surface */
     bool surface_reached = false;
+    heading_check_counter = 0;
     for (int i=0;i<60;i++) {
         uint64_t elapsed_ms = k_uptime_get() - dive_start_ms;
         double elapsed_s = (double)elapsed_ms / 1000.0;
@@ -391,6 +510,13 @@ static void simulate_dive_cycle(struct app_params *p, double surface_pa)
         hmc6343_read(&head,&pitch,&roll);
         app_printk("[SENS] IntP=%d Pa, SimDepth=%.2fm, H=%.1f,R=%.1f,P=%.1f\r\n",
                    internal_pa, simulated_depth_m, head, roll, pitch);
+
+        /* Check heading and adjust roll every HEADING_CHECK_INTERVAL_SEC */
+        heading_check_counter++;
+        if (heading_check_counter >= HEADING_CHECK_INTERVAL_SEC) {
+            heading_check_counter = 0;
+            update_roll_for_heading(false, head, (float)p->desired_heading_deg, p);
+        }
         
         if (!surface_reached && simulated_depth_m < 1.0) {
             surface_reached = true;
@@ -410,6 +536,16 @@ static void simulate_dive_cycle(struct app_params *p, double surface_pa)
                 pump_run(+1, (uint32_t)(pump_to_surface + 0.5f));
             } else if (pump_to_surface < -0.5f) {
                 pump_run(-1, (uint32_t)(-pump_to_surface + 0.5f));
+            }
+            
+            /* Return roll to neutral when reaching surface */
+            float current_roll = motor_get_position_sec(MOTOR_ROLL);
+            float roll_delta = (float)p->start_roll_s - current_roll;
+            if (fabsf(roll_delta) > 0.5f) {
+                int dir = (roll_delta > 0) ? +1 : -1;
+                uint32_t duration = (uint32_t)(fabsf(roll_delta) + 0.5f);
+                motor_run(MOTOR_ROLL, dir, duration);
+                app_printk("[SIMULATE] returning roll to neutral (%.1fs)\r\n", (float)p->start_roll_s);
             }
             
             for (int j=0; j<5; j++) {

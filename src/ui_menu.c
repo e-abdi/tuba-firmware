@@ -12,7 +12,7 @@
 #include "hw_bmp180.h"
 #include "hw_gps.h"
 #include "hw_hmc6343.h"
-#include "hw_gps.h"
+#include "hw_limit_switches.h"
 #include "hw_hmc6343.h"
 #include "deploy.h"
 
@@ -89,12 +89,17 @@ void on_entry_COMPASS_MENU(void){
     app_printk("Select [1,2,x]: ");
 }
 
+void on_entry_LIMIT_TEST(void){
+    /* This state is now unused - interactive test is called directly from PR_MENU */
+}
+
 void on_entry_PR_MENU(void){
     app_printk("\r\n-- Pitch & Roll --\r\n");
     app_printk("1) roll\r\n");
     app_printk("2) pitch\r\n");
+    app_printk("3) pitch limit switches (test)\r\n");
     app_printk("x) back\r\n");
-    app_printk("Select [1,2,x]: ");
+    app_printk("Select [1-3,x]: ");
 }
 
 void on_entry_RECOVERY(void){
@@ -143,6 +148,7 @@ state_id_t on_event_PARAM_INPUT(const event_t *e){ return ST_PARAM_INPUT; }
 state_id_t on_event_PR_MENU(const event_t *e){ return ST_PR_MENU; }
 state_id_t on_event_PR_INPUT(const event_t *e){ return ST_PR_INPUT; }
 state_id_t on_event_PUMP_INPUT(const event_t *e){ return ST_PUMP_INPUT; }
+state_id_t on_event_LIMIT_TEST(const event_t *e){ return ST_LIMIT_TEST; }
 state_id_t on_event_RECOVERY(const event_t *e){ return ST_RECOVERY; }
 state_id_t on_event_DEPLOYED(const event_t *e){
     /* Check if deploy has completed (thread no longer running) */
@@ -227,6 +233,7 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
     if (state==ST_PR_MENU){
         if(line[0]=='1'){ current_motor=MOTOR_ROLL;  app_printk("[ROLL] Enter seconds [-10,10], q to quit\r\n> ");  return ST_PR_INPUT; }
         if(line[0]=='2'){ current_motor=MOTOR_PITCH; app_printk("[PITCH] Enter seconds [-10,10], q to quit\r\n> "); return ST_PR_INPUT; }
+        if(line[0]=='3'){ limit_switches_test_interactive(); on_entry_PR_MENU(); return ST_PR_MENU; }
         if(line[0]=='x' || line[0]=='X'){ return ST_HWTEST_MENU; }
         app_printk("Invalid.\r\n");
         return ST_PR_MENU;
@@ -248,6 +255,19 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
         if(val<TEST_MIN_SEC||val>TEST_MAX_SEC){ app_printk("Range -10..10 only\r\n> ");     return ST_PUMP_INPUT; }
         int dir=(val>=0)?+1:-1; uint32_t dur=(val>=0)?(uint32_t)val:(uint32_t)(-val);
         pump_run(dir,dur); app_printk("> "); return ST_PUMP_INPUT;
+    }
+
+    if (state==ST_LIMIT_TEST){
+        if((line[0]=='q'||line[0]=='Q') && line[1]=='\0'){ 
+            on_entry_PR_MENU(); return ST_PR_MENU; 
+        }
+        /* Show limit switch status - this is a display-only state, poll status */
+        bool up_pressed = limit_switch_is_pressed(LIMIT_PITCH_UP);
+        bool down_pressed = limit_switch_is_pressed(LIMIT_PITCH_DOWN);
+        app_printk("GPIO32 (UP):   %s  |  GPIO33 (DOWN): %s\r\n", 
+                   up_pressed ? "[PRESSED]" : "[OPEN]", 
+                   down_pressed ? "[PRESSED]" : "[OPEN]");
+        return ST_LIMIT_TEST;
     }
 
     if (state==ST_COMPASS_MENU){
