@@ -1,0 +1,194 @@
+CERN Open Hardware Licence Version 2 - Weakly Reciprocal (CERN-OHL-W v2)
+
+Preamble
+
+CERN has developed this licence to promote collaboration among hardware designers
+and to ensure that hardware developed in this way remains open.
+
+The CERN-OHL v2 is copyright CERN 2020. Everyone is welcome to use the CERN-OHL v2
+without any further authorisation. You may redistribute and/or modify this Licence
+and/or the accompanying materials under the terms of the CERN Open Hardware Licence
+v2 ("OHL v2") and any subsequent versions.
+
+Licensees may copy, distribute and transmit the work under this licence, on condition
+that the work is given prominent notice of the license, and any subsequent versions
+are offered under the terms of the same licence.
+
+Hardware derived from works licenced under the OHL v2 must be licenced under the OHL v2
+or an open source licence which is compatible with the OHL v2 at the time of release.
+
+The OHL v2 is a licence for hardware which attempts to protect the right of the licensee
+to study, modify and manufacture the licensed hardware, while ensuring that all derived
+works remain open and available to the community.
+
+Definitions
+
+In this licence the following terms have the following meanings:
+
+"Licence" means the CERN-OHL v2 in the form of this document.
+
+"Documentation" means schematic diagrams, designs, circuit or circuit board layouts,
+mechanical drawings, flow charts and textual descriptions, with or without flowcharts,
+provided that these are issued in electronic or hardcopy form and fully describe or
+represent the apparatus, machine, product, process or method concerned or necessary to
+understood the Licensed Hardware fully.
+
+"Licensed Hardware" means the apparatus, machine, product, process or method described
+in the Documentation, and any subsequent versions thereof, that you manufacture,
+produce, assemble or otherwise create based upon the Documentation. Licensed Hardware
+specifically includes any variants, derivatives or modifications of the apparatus,
+machine, product, process or method described in the Documentation.
+
+"Source" means information such as a design file or code which can be applied to make
+Licensed Hardware. Source correspondingly includes the medium on which Source is stored
+and specific locations where particulars of Source can be found.
+
+"Licensee" means any natural or legal person exercising rights and obligations under
+this Licence.
+
+"Licensor" means any natural or legal person that creates or modifies Documentation
+and thereafter publishes and distributes the Licensed Hardware and Documentation or -
+where Documentation is distributed separately from Licensed Hardware - distributes
+Documentation; for the avoidance of doubt, Licensor includes distributors of Licensed
+Hardware as well as making Licensed Hardware.
+
+"Relevant Licence" means this Licence or any later version thereof published by CERN.
+
+"You" refers to any Licensee.
+
+"Warranty disclaimer" Any of the Documentation and Licensed Hardware may be incomplete
+or contain errors: they are provided "as is" without warranty of any kind, whether
+express or implied, including but without limitation any implied warranty of
+merchantability, fitness for a particular purpose and non-infringement. In no event
+shall the Licensor be liable to You for damages, including any general, special,
+indirect or consequential damages arising out of any use of the Documentation or
+Licensed Hardware.
+
+1. Rights and Obligations
+
+1.1. Upon reading, using, copying, distributing, modifying or manufacturing anything
+based on this Documentation, you agree to be bound by the terms and conditions of this
+Licence.
+
+1.2. This Licence grants you certain rights in respect to the Licensed Hardware and
+the Documentation on the conditions below. The Licensor retains all rights to the
+Documentation and Licensed Hardware not expressly granted to you by this Licence.
+
+1.3. The rights granted under this Licence are granted for the term of the copyright
+in the Licensed Hardware and Documentation and any successors in title to this
+copyright.
+
+1.4. You agree to use your rights under this Licence in a manner that complies with
+all applicable laws and regulations in the territories in which you live and work and
+in all places in which use occurs.
+
+2. Obtaining the Documentation
+
+2.1. You can obtain the Documentation as set out in section 3.4 on an "as-is" basis.
+
+The Licensor may provide additional Documentation. If the Licensor does not provide
+the Documentation, you are entitled to ask questions - send queries to the Licensor
+specifying the Document and stating what fields of use you intend.
+
+3. Modification, Exploitation and Distribution of the Documentation and Licensed Hardware
+
+3.1. You may copy, distribute and make publicly available the Documentation; provided
+that you retain in the Documentation and in any Document that is derived from the
+Documentation the following notices:
+(a) the words "Information subject to restricted distribution";
+(b) a statement that the Documentation is licensed under the Relevant Licence;
+(c) a statement that the Documentation is provided "as-is";
+(d) a disclaimer of warranty in accordance with section 7 of this Licence;
+(e) a statement that redistributors of the Documentation must assure that recipients
+of the Documentation are made aware of these requirements, and that use of the
+Documentation is subject to these restrictions and the conditions of the Relevant
+Licence; and
+(f) you add your name and the date to the list of people who have modified the
+Documentation, and state the nature of the modifications you made.
+
+3.2. You may manufacture or distribute Licensed Hardware based on the Documentation;
+provided that you:
+(a) ensure that persons receiving Licensed Hardware to which source code is
+accessible are also made aware of their right to receive - from you or your
+suppliers - the Documentation on which the Licensed Hardware is based, including
+source code where applicable, on request and at no extra cost beyond the direct
+cost of delivery; and
+(b) retain or, if you modify the Licensed Hardware, ensure to be applied to the
+Licensed Hardware, the following notices:
+(i) the words "Information subject to restricted distribution";
+(ii) a notice that the Licensed Hardware is licensed under the Relevant Licence;
+(iii) a notice that the Licensed Hardware is provided "as-is";
+(iv) a warranty disclaimer in accordance with section 7 of this Licence;
+(v) a statement that redistribution of the Licensed Hardware must assure that
+recipients of the Licensed Hardware are made aware of these requirements, and that
+use of the Licensed Hardware is subject to these restrictions and the conditions of
+the Relevant Licence; and
+(vi) you add your name and the date to the list of people who have modified the
+Licensed Hardware, and state the nature of the modifications you made.
+
+3.3. The Licence permits you to manufacture and distribute Licensed Hardware, and
+you may place your own name and date on the Licensed Hardware so made.
+
+3.4. The Documentation and Licensed Hardware are provided "as-is". Notwithstanding
+anything else in this Licence or any other agreement, save as and to the extent
+expressly set out herein or as permitted by applicable law:
+(a) the Documentation and Licensed Hardware are provided without warranty of any kind,
+whether express or implied;
+(b) the Licensor makes no representation as to the accuracy, completeness,
+non-infringement, merchantability, fitness for a particular purpose of the
+Documentation and Licensed Hardware;
+(c) you assume all responsibility and risk for the use, quality and performance of
+anything manufactured based upon the Documentation or Licensed Hardware.
+
+4. Exclusion of liability
+
+Save as and to the extent expressly set out in this Licence or permitted by applicable
+law, the Licensor shall have no liability for special, indirect or consequential loss
+or damage whatsoever arising out of or in connection with the Licence or the use of
+the Documentation or Licensed Hardware.
+
+5. Patent and Know How
+
+5.1. You are permitted to carry out research on the Licensed Hardware and to perform
+reverse engineering to understand its nature. However, you are not permitted to copy
+or adapt any Software (as defined below) on the Licensed Hardware or that is otherwise
+protected by intellectual property rights.
+
+5.2. All patents and know-how are provided on an "as-is" basis without warranty or
+indemnification and the Licensor makes no representation as to the validity or scope
+of any patents.
+
+6. General
+
+6.1. If any provision of this Licence is held to be invalid or unenforceable, the
+remaining provisions shall not be affected thereby.
+
+6.2. This Licence constitutes the complete and entire agreement between You and the
+Licensor with respect to the subject-matter of the Licence. It supersedes all prior
+and concurrent agreements between You and the Licensor relating to such subject-matter,
+whether written or oral. If any term of this Licence conflicts with any other written
+document you and the Licensor have agreed upon, the terms of this Licence shall take
+precedence.
+
+6.3. You shall not assign, pledge or transfer this Licence or any rights granted
+hereunder except with the express permission of the Licensor. Any attempted
+assignment without such permission shall be void.
+
+6.4. Should any term of this Licence be declared invalid or unenforceable by a court
+of competent jurisdiction, that term shall be severable and shall not affect the
+validity or enforceability of the remaining terms of this Licence.
+
+7. Warranty Disclaimer
+
+THE DOCUMENTATION AND LICENSED HARDWARE ARE PROVIDED "AS-IS" WITHOUT WARRANTY OF ANY
+KIND, INCLUDING BUT NOT LIMITED TO ANY IMPLIED WARRANTY OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. THE LICENSOR MAKES NO REPRESENTATION
+AS TO THE ACCURACY, COMPLETENESS, NON-INFRINGEMENT, MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE OF THE DOCUMENTATION AND LICENSED HARDWARE. YOU ASSUME ALL
+RESPONSIBILITY AND RISK FOR THE USE, QUALITY AND PERFORMANCE OF ANYTHING MANUFACTURED
+BASED UPON THE DOCUMENTATION OR LICENSED HARDWARE.
+
+IN NO EVENT SHALL THE LICENSOR BE LIABLE TO YOU OR ANY OTHER PERSON FOR ANY SPECIAL,
+INDIRECT, INCIDENTAL, CONSEQUENTIAL OR EXEMPLARY DAMAGES ARISING OUT OF OR IN
+CONNECTION WITH THIS LICENCE OR THE USE OF THE DOCUMENTATION OR LICENSED HARDWARE,
+EVEN IF THE LICENSOR HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
