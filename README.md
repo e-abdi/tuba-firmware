@@ -5,10 +5,10 @@ Tuba ESP32 Firmware (Zephyr)
 ## Overview
 - Platform: ESP32 DevKitC (WROOM-32U) running Zephyr RTOS
 - Networking: WiFi Access Point with telnet console
-- Console: USB UART0 (primary), WiFi telnet (net console), UART1 mirror (OpenLog)
-- Sensors: BMP180 (internal pressure), MS5837 (external pressure + depth), HMC6343 (compass), u-blox GPS
+- Console: WiFi telnet (primary interactive console), UART0 output to OpenLog
+- Sensors: BMP180 (internal pressure), MS5837 (external pressure), HMC6343 (compass), u-blox (GPS)
 - I2C: SDA=GPIO21, SCL=GPIO22 at 100 kHz
-- **Limit Switches**: GPIO32/33 for pitch motor endstops (automatic stop on trigger)
+- Limit Switches: GPIO32/33 for pitch motor endstops (automatic stop on trigger)
 
 ## Build and Flash
 ```bash
@@ -20,20 +20,19 @@ WiFi AP Console
 - SSID: `Tuba-Glider`
 - IP: `192.168.4.1`
 - Telnet: `telnet 192.168.4.1 23`
-- Behavior: Full console mirror over WiFi; input lines are accepted when you press ENTER.
+- Behavior: Console output mirrored over WiFi; input lines are accepted when you press ENTER.
 
-UART Mirror (OpenLog)
-- Port: `uart1`
-- TX: `GPIO10` (connect to OpenLog RX)
-- RX: `GPIO9` (not required for logging)
-- Baud: `9600`
+OpenLog Data Logging
+- Port: `uart0` (USB, output-only)
+- Baud: `115200`
+- Console output is logged to OpenLog via UART0
+- **Important**: Remove OpenLog from the board when flashing code. Reconnect after flashing is complete.
 
 Pins Summary
-- UART0 (USB console): TX=`GPIO1`, RX=`GPIO3`
-- UART1 (GPS/Log mirror): TX=`GPIO10`, RX=`GPIO9`
+- UART0 (OpenLog output): TX=`GPIO1`, RX=`GPIO3` (RX not used)
 - I2C0 (sensors): SDA=`GPIO21`, SCL=`GPIO22`
-- **Pitch Limit UP**: `GPIO32` (endstop switch)
-- **Pitch Limit DOWN**: `GPIO33` (endstop switch)
+- Pitch Limit UP: `GPIO32` (endstop switch)
+- Pitch Limit DOWN: `GPIO33` (endstop switch)
 
 ## Limit Switches (Pitch Motor)
 Pitch motor automatically stops when either endstop switch is triggered:
@@ -53,11 +52,14 @@ External Pressure + Depth
   - Depth formula: `depth = (P − P0) / (ρ · g)` with `ρ=1000 kg/m^3`, `g=9.80665 m/s^2`.
 
 Common Tasks
-- Connect WiFi console:
+- Connect WiFi console (main interactive console):
   ```bash
   telnet 192.168.4.1 23
   ```
-- View GPS output: connected to `uart1` (9600 baud); mirrored logs appear on WiFi and UART1.
+- Flash new firmware:
+  1. Remove OpenLog from USB port
+  2. Run `west flash`
+  3. Reconnect OpenLog after flashing
 - I2C scan at boot prints detected addresses.
 
 ## License
@@ -77,4 +79,4 @@ For more information about CERN-OHL, visit: https://cern.ch/cern-ohl
 
 Notes
 - Previous documentation referenced Raspberry Pi Pico/Pico W. The project now targets ESP32. For legacy notes, see historical docs in this repo.
-- AP mode is quiet in logs; the TCP echo server accepts input lines and mirrors console output to connected clients.
+- AP mode is quiet in logs; console output is mirrored to WiFi clients via TCP echo server.
