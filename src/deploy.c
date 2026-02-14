@@ -65,37 +65,41 @@ static int roll_direction_for_phase(bool dive_phase, float hdg_delta)
 static bool update_roll_for_heading(bool dive_phase, float current_heading, float desired_heading, struct app_params *p)
 {
     float hdg_delta = heading_delta(current_heading, desired_heading);
-    int roll_dir = roll_direction_for_phase(dive_phase, hdg_delta);
     
-    float current_roll = motor_get_position_sec(MOTOR_ROLL);
-    float target_roll = (roll_dir > 0) ? (float)p->max_roll_s : 
-                        (roll_dir < 0) ? -(float)p->max_roll_s : 
-                        (float)p->start_roll_s;
-    float roll_delta = target_roll - current_roll;
-    
-    if (fabsf(roll_delta) > 0.5f) {
-        int dir = (roll_delta > 0) ? +1 : -1;
-        uint32_t duration = (uint32_t)(fabsf(roll_delta) + 0.5f);
-        app_printk("[DEPLOY] roll START: heading=%.1f°, desired=%.1f° (Δ=%.1f°), "
-                   "rolling %s from %.1fs to %.1fs (duration=%us)\r\n",
-                   current_heading, desired_heading, hdg_delta,
-                   roll_dir > 0 ? "starboard" : roll_dir < 0 ? "port" : "neutral",
-                   current_roll, target_roll, duration);
-        motor_run(MOTOR_ROLL, dir, duration);
-        return true;
-    } else if (hdg_delta <= HEADING_TOLERANCE_DEG && hdg_delta >= -HEADING_TOLERANCE_DEG) {
-        /* Heading is within tolerance - return to neutral roll */
+    /* If heading is already within tolerance, check if we need to return to neutral */
+    if (hdg_delta <= HEADING_TOLERANCE_DEG && hdg_delta >= -HEADING_TOLERANCE_DEG) {
+        float current_roll = motor_get_position_sec(MOTOR_ROLL);
         float neutral_roll = (float)p->start_roll_s;
         float neutral_delta = neutral_roll - current_roll;
         if (fabsf(neutral_delta) > 0.5f) {
             int dir = (neutral_delta > 0) ? +1 : -1;
             uint32_t duration = (uint32_t)(fabsf(neutral_delta) + 0.5f);
-            app_printk("[DEPLOY] roll END: heading reached (%.1f°, within ±%.1f° tolerance), "
-                       "returning to neutral roll from %.1fs to %.1fs (duration=%us)\r\n",
+            app_printk("[ROLL] RETURN: heading=%.1f° (within ±%.1f° tolerance), "
+                       "returning roll to neutral (%.1fs→%.1fs, duration=%us)\r\n",
                        current_heading, HEADING_TOLERANCE_DEG, current_roll, neutral_roll, duration);
             motor_run(MOTOR_ROLL, dir, duration);
             return true;
         }
+        return false;  /* Already at neutral, no action needed */
+    }
+    
+    /* Heading outside tolerance - determine correction direction */
+    int roll_dir = roll_direction_for_phase(dive_phase, hdg_delta);
+    
+    float current_roll = motor_get_position_sec(MOTOR_ROLL);
+    float target_roll = (roll_dir > 0) ? (float)p->max_roll_s : -(float)p->max_roll_s;
+    float roll_delta = target_roll - current_roll;
+    
+    if (fabsf(roll_delta) > 0.5f) {
+        int dir = (roll_delta > 0) ? +1 : -1;
+        uint32_t duration = (uint32_t)(fabsf(roll_delta) + 0.5f);
+        const char *phase = (dive_phase ? "dive" : "climb");
+        app_printk("[ROLL] MOVE (%s): heading=%.1f° desired=%.1f° (Δ=%.1f°), "
+                   "moving roll %.1fs→%.1fs for %us\r\n",
+                   phase, current_heading, desired_heading, hdg_delta,
+                   current_roll, target_roll, duration);
+        motor_run(MOTOR_ROLL, dir, duration);
+        return true;
     }
     return false;
 }
@@ -270,7 +274,8 @@ static void deploy_dive_cycle(struct app_params *p, double surface_pa)
                 int dir = (roll_delta > 0) ? +1 : -1;
                 uint32_t duration = (uint32_t)(fabsf(roll_delta) + 0.5f);
                 motor_run(MOTOR_ROLL, dir, duration);
-                app_printk("[DEPLOY] returning roll to neutral (%.1fs)\r\n", (float)p->start_roll_s);
+                app_printk("[ROLL] RETURN: surfacing, returning roll to neutral (%.1fs→0.0s, duration=%us)\r\n",
+                           current_roll, duration);
             }
             
             for (int j=0; j<5; j++) {
@@ -545,7 +550,8 @@ static void simulate_dive_cycle(struct app_params *p, double surface_pa)
                 int dir = (roll_delta > 0) ? +1 : -1;
                 uint32_t duration = (uint32_t)(fabsf(roll_delta) + 0.5f);
                 motor_run(MOTOR_ROLL, dir, duration);
-                app_printk("[SIMULATE] returning roll to neutral (%.1fs)\r\n", (float)p->start_roll_s);
+                app_printk("[ROLL] RETURN: surfacing, returning roll to neutral (%.1fs→0.0s, duration=%us)\r\n",
+                           current_roll, duration);
             }
             
             for (int j=0; j<5; j++) {

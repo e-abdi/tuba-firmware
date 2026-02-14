@@ -53,6 +53,7 @@ struct motor_state {
     struct k_work_delayable stop_work;
     atomic_t running;
     int32_t position_sec;
+    bool use_slow_timing;  /* For ROLL motor: use slower timing for reduced speed */
 };
 
 static struct motor_state g_motors[2];
@@ -82,7 +83,10 @@ static void motor_stop_work(struct k_work *work)
     struct motor_state *m = CONTAINER_OF(dwork, struct motor_state, stop_work);
     (void)motor_all_low(m);
     atomic_clear(&m->running);
-    app_printk("[MOTOR] timed stop\r\n");
+    
+    /* Determine which motor this is */
+    const char *tag = (m == &g_motors[0]) ? "[ROLL]" : "[PITCH]";
+    app_printk("%s timed stop\r\n", tag);
 }
 
 static int motor_configure(struct motor_state *m, const struct motor_gpio *io)
@@ -91,6 +95,7 @@ static int motor_configure(struct motor_state *m, const struct motor_gpio *io)
 
     m->io = *io;
     m->position_sec = 0;
+    m->use_slow_timing = false;
 
     if (m->io.in1.port) {
         if (!gpio_is_ready_dt(&m->io.in1)) { return -ENODEV; }
@@ -105,6 +110,12 @@ static int motor_configure(struct motor_state *m, const struct motor_gpio *io)
 
     k_work_init_delayable(&m->stop_work, motor_stop_work);
     atomic_clear(&m->running);
+    
+    /* For ROLL motor, slow timing is NOT currently implemented */
+    if (m == &g_motors[0]) {  /* MOTOR_ROLL */
+        m->use_slow_timing = false;  /* Disabled for now */
+    }
+    
     return 0;
 }
 
@@ -117,7 +128,8 @@ void motor_cmd(enum motor_id id, int dir, uint32_t duration_s)
     if (dir == 0) {
         (void)motor_all_low(m);
         atomic_clear(&m->running);
-        app_printk("[MOTOR] stop\r\n");
+        const char *tag = (id == MOTOR_ROLL ? "[ROLL]" : "[PITCH]");
+        app_printk("%s stop\r\n", tag);
         return;
     }
 
@@ -145,8 +157,8 @@ void motor_cmd(enum motor_id id, int dir, uint32_t duration_s)
     atomic_set(&m->running, 1);
 
     if (duration_s == 0) {
-        app_printk("[MOTOR] %s start (continuous)\r\n",
-               (id == MOTOR_ROLL ? "ROLL" : "PITCH"));
+        const char *tag = (id == MOTOR_ROLL ? "[ROLL]" : "[PITCH]");
+        app_printk("%s start (continuous)\r\n", tag);
         return;
     }
 
@@ -155,10 +167,21 @@ void motor_cmd(enum motor_id id, int dir, uint32_t duration_s)
         delta = -delta;
     }
     m->position_sec += delta;
+    
     k_work_schedule(&m->stop_work, K_SECONDS(duration_s));
-    app_printk("[MOTOR] %s run %s for %us\r\n",
-           (id == MOTOR_ROLL ? "ROLL" : "PITCH"),
-           (dir > 0 ? "FWD" : "REV"),
+    
+    const char *tag = (id == MOTOR_ROLL ? "[ROLL]" : "[PITCH]");
+    const char *motor_name = (id == MOTOR_ROLL ? "ROLL" : "PITCH");
+    const char *direction;
+    if (id == MOTOR_ROLL) {
+        direction = (dir > 0 ? "PORT" : "STARBOARD");
+    } else {
+        direction = (dir > 0 ? "FWD" : "AFT");
+    }
+    app_printk("%s %s run %s for %us\r\n",
+           tag,
+           motor_name,
+           direction,
            (unsigned)duration_s);
 }
 

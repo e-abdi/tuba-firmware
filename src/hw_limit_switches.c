@@ -24,11 +24,12 @@ struct limit_switch_state {
     struct gpio_callback callback;
     volatile bool triggered;
     volatile int64_t last_trigger_time;
+    volatile bool ignore_switches;  /* Flag to disable switch checking during reverse */
 };
 
 static struct limit_switch_state g_limit_switches[2] = {
-    {.pin = 32, .last_trigger_time = 0},   /* LIMIT_PITCH_UP */
-    {.pin = 33, .last_trigger_time = 0}    /* LIMIT_PITCH_DOWN */
+    {.pin = 32, .last_trigger_time = 0, .ignore_switches = false},   /* LIMIT_PITCH_UP */
+    {.pin = 33, .last_trigger_time = 0, .ignore_switches = false}    /* LIMIT_PITCH_DOWN */
 };
 
 static void limit_switch_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
@@ -72,18 +73,37 @@ void limit_switch_callback(int switch_id)
 /* Called from main loop to handle triggered limit switches safely */
 void limit_switches_check_and_stop(void)
 {
+    /* Skip if we're in the middle of a reverse procedure */
+    if (g_limit_switches[0].ignore_switches) {
+        return;
+    }
+    
     /* Check if either limit switch is currently pressed */
     bool up_pressed = limit_switch_is_pressed(LIMIT_PITCH_UP);
     bool down_pressed = limit_switch_is_pressed(LIMIT_PITCH_DOWN);
     
     if (up_pressed) {
-        app_printk("[LIMIT] Pitch LIMIT UP (GPIO32) triggered, stopping pitch motor\r\n");
-        motor_run(MOTOR_PITCH, 0, 0);  /* Stop motor */
+        app_printk("[LIMIT] Pitch LIMIT UP (GPIO32) triggered, stopping then reversing\r\n");
+        motor_run(MOTOR_PITCH, 0, 0);  /* Stop motor immediately */
+        k_sleep(K_MSEC(100));           /* Brief pause */
+        
+        /* Ignore switches during reverse to prevent immediate re-trigger */
+        g_limit_switches[0].ignore_switches = true;
+        motor_run(MOTOR_PITCH, -1, 1);  /* Reverse (AFT) for 1 second to release switch */
+        k_sleep(K_SECONDS(1));
+        g_limit_switches[0].ignore_switches = false;
     }
     
     if (down_pressed) {
-        app_printk("[LIMIT] Pitch LIMIT DOWN (GPIO33) triggered, stopping pitch motor\r\n");
-        motor_run(MOTOR_PITCH, 0, 0);  /* Stop motor */
+        app_printk("[LIMIT] Pitch LIMIT DOWN (GPIO33) triggered, stopping then reversing\r\n");
+        motor_run(MOTOR_PITCH, 0, 0);  /* Stop motor immediately */
+        k_sleep(K_MSEC(100));           /* Brief pause */
+        
+        /* Ignore switches during reverse to prevent immediate re-trigger */
+        g_limit_switches[0].ignore_switches = true;
+        motor_run(MOTOR_PITCH, +1, 1);  /* Reverse (FWD) for 1 second to release switch */
+        k_sleep(K_SECONDS(1));
+        g_limit_switches[0].ignore_switches = false;
     }
 }
 
