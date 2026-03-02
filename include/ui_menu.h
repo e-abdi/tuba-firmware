@@ -13,6 +13,7 @@ void on_entry_RECOVERY(void);
 void on_entry_DEPLOYED(void);
 void on_entry_SIMULATE(void);
 void on_entry_COMPASS_MENU(void);
+void on_entry_OTA_MENU(void);
 
 state_id_t on_event_POWERUP_WAIT(const event_t *e);
 state_id_t on_event_MENU(const event_t *e);
@@ -26,6 +27,7 @@ state_id_t on_event_RECOVERY(const event_t *e);
 state_id_t on_event_DEPLOYED(const event_t *e);
 state_id_t on_event_SIMULATE(const event_t *e);
 state_id_t on_event_COMPASS_MENU(const event_t *e);
+state_id_t on_event_OTA_MENU(const event_t *e);
 
 
 /* line handler (needed by main.c) */

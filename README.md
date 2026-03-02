@@ -1,82 +1,97 @@
-Tuba ESP32 Firmware (Zephyr)
+# Tuba ESP32 Glider Firmware
 
-**License**: CERN-OHL-W v2 (Open Hardware)
+**License**: CERN-OHL-W v2 (Open Hardware)  
+**Platform**: ESP32 DevKitC (WROOM-32U) running Zephyr RTOS v4.3.0  
+**Bootloader**: MCUboot with dual-slot OTA support
 
-## Overview
-- Platform: ESP32 DevKitC (WROOM-32U) running Zephyr RTOS
-- Networking: WiFi Access Point with telnet console
-- Console: WiFi telnet (primary interactive console), UART0 output to OpenLog
-- Sensors: BMP180 (internal pressure), MS5837 (external pressure), HMC6343 (compass), u-blox (GPS)
-- I2C: SDA=GPIO21, SCL=GPIO22 at 100 kHz
-- Limit Switches: GPIO32/33 for pitch motor endstops (automatic stop on trigger)
+## Quick Start
 
-## Build and Flash
+### Build Firmware
 ```bash
-west build -b esp32_devkitc_wroom --pristine=auto
+west build --sysbuild --board=esp32_devkitc/esp32/procpu
+```
+
+The signed firmware will be at: `build/tuba/zephyr/zephyr.signed.bin`
+
+### Flash Device
+```bash
 west flash
 ```
 
-WiFi AP Console
-- SSID: `Tuba-Glider`
-- IP: `192.168.4.1`
-- Telnet: `telnet 192.168.4.1 23`
-- Behavior: Console output mirrored over WiFi; input lines are accepted when you press ENTER.
+## Hardware Overview
 
-OpenLog Data Logging
-- Port: `uart0` (USB, output-only)
-- Baud: `115200`
-- Console output is logged to OpenLog via UART0
-- **Important**: Remove OpenLog from the board when flashing code. Reconnect after flashing is complete.
+**Console**: WiFi telnet (SSID: `Tuba-Glider`, IP: `192.168.4.1`, port 23)  
+**Logging**: UART0 to OpenLog (9600 baud) — **remove before flashing**
 
-Pins Summary
-- UART0 (OpenLog output): TX=`GPIO1`, RX=`GPIO3` (RX not used)
-- I2C0 (sensors): SDA=`GPIO21`, SCL=`GPIO22`
-- Pitch Limit UP: `GPIO32` (endstop switch)
-- Pitch Limit DOWN: `GPIO33` (endstop switch)
+### GPIO Pinout
 
-## Limit Switches (Pitch Motor)
-Pitch motor automatically stops when either endstop switch is triggered:
-- GPIO32: Pitch UP limit (maximum nose-up)
-- GPIO33: Pitch DOWN limit (maximum nose-down)
-- Active-low inputs with 4.7kΩ pull-ups to 3.3V
-- Real-time monitoring via main event loop
-- Test via menu: Hardware Test → Pitch and Roll → Limit Switches
+| Device | Pin(s) | Notes |
+|--------|--------|-------|
+| **Motor: Roll** | GPIO25/26 | H-bridge inputs |
+| **Motor: Pitch** | GPIO27/14 | H-bridge inputs |
+| **Pump** | GPIO18/19 | Variable buoyancy |
+| **Pitch Limit UP** | GPIO32 | Input-only, active-low |
+| **Pitch Limit DOWN** | GPIO33 | Input-only, active-low |
+| **I2C: SDA/SCL** | GPIO21/22 | Sensors: BMP180, MS5837, HMC6343 |
+| **UART0: TX/RX** | GPIO1/3 | OpenLog console output |
 
-External Pressure + Depth
-- Sensor: MS5837 (address 0x76)
-- PROM validated via CRC-4; OSR=8192 reads with proper delays.
-- Hardware Test menu “External Pressure”:
-  - Calibrates baseline sea-level pressure over ~10 seconds.
-  - Displays temperature, pressure (kPa), and computed depth (m).
-  - Recalibrate anytime: press `b` then ENTER.
-  - Depth formula: `depth = (P − P0) / (ρ · g)` with `ρ=1000 kg/m^3`, `g=9.80665 m/s^2`.
+## Over-The-Air (OTA) Updates
 
-Common Tasks
-- Connect WiFi console (main interactive console):
-  ```bash
-  telnet 192.168.4.1 23
-  ```
-- Flash new firmware:
-  1. Remove OpenLog from USB port
-  2. Run `west flash`
-  3. Reconnect OpenLog after flashing
-- I2C scan at boot prints detected addresses.
+OTA allows wireless firmware updates without physical access. MCUboot handles safe atomic swaps between firmware slots.
 
-## License
+### Three-Step Update Process
 
-This project is licensed under the **CERN Open Hardware Licence v2 - Weakly Reciprocal (CERN-OHL-W)**.
+**1. Modify code** (e.g., change startup timeout):
+```bash
+# Edit src/app_params.c or prj.conf
+west build --sysbuild --board=esp32_devkitc/esp32/procpu
+```
 
-See `LICENSE` file for full license text.
+**2. Start HTTP server** (from firmware output directory):
+```bash
+cd build/tuba/zephyr
+python3 -m http.server 8000
+```
 
-### What this means:
-- ✅ You can study, modify, and build from the hardware design
-- ✅ You can manufacture and distribute the hardware
-- ✅ Modifications must be shared under the same license
-- ✅ You must document any changes
-- ✅ Source code and hardware documentation must remain freely available
+**3. Trigger OTA from device**:
+```bash
+telnet 192.168.4.1 23
+# Select menu option 5: OTA firmware update
+# Enter: http://<YOUR_PC_IP>:8000/zephyr.signed.bin
+```
 
-For more information about CERN-OHL, visit: https://cern.ch/cern-ohl
+Device will:
+- Download firmware (~667 KB)
+- Verify MCUboot signature
+- Request upgrade
+- Reboot and swap images
+- Run new firmware
 
-Notes
-- Previous documentation referenced Raspberry Pi Pico/Pico W. The project now targets ESP32. For legacy notes, see historical docs in this repo.
-- AP mode is quiet in logs; console output is mirrored to WiFi clients via TCP echo server.
+### What's Working
+
+✅ MCUboot bootloader integration (separate image)  
+✅ Dual-slot OTA with atomic swaps  
+✅ HTTP download with robust header parsing (split packets)  
+✅ Direct flash_area writes (no buffering issues)  
+✅ MCUboot header validation  
+✅ Verified firmware signature check  
+✅ Parameter persistence through OTA  
+
+### OTA Architecture
+
+```
+Download Phase:
+  Device (WiFi AP) ← HTTP GET ← Server
+  Device writes to slot1 (0x170000) via flash_area_write()
+
+Verification Phase:
+  Device reads MCUboot header from slot1
+  boot_read_bank_header() validates signature
+
+Apply Phase:
+  boot_request_upgrade(1) sets permanent swap flag
+  Device reboots → MCUboot swaps images
+  slot1 (new) → slot0 (running), old slot0 archived
+```
+
+

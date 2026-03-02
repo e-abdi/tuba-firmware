@@ -1,6 +1,7 @@
 #include <zephyr/kernel.h>
 #include "net_console.h"
 #include <zephyr/sys/printk.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/usb/usb_device.h>
@@ -27,6 +28,9 @@
 #include "hw_pump.h"
 #include "hw_limit_switches.h"
 #include "app_params.h"
+#include "ota_simple.h"
+#include "build_info.h"
+#include "version.h"
 
 /* Console UART - using _OR_NULL to avoid crash if not available */
 static const struct device *const uart_console = DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_console));
@@ -492,6 +496,11 @@ void main(void) {
     printk("Initializing limit switches...\r\n");
     (void)limit_switches_init();
     printk("Limit switches initialized\r\n");
+
+    /* Init OTA subsystem */
+    printk("Initializing OTA subsystem...\r\n");
+    (void)ota_simple_init();
+    printk("OTA subsystem initialized\r\n");
 
     printk("Main loop starting...\r\n");
     k_sleep(K_MSEC(100));

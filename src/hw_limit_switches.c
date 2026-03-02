@@ -10,8 +10,10 @@
 #include "net_console.h"
 
 /* ESP32 HAL for direct register access to GPIO32/33 */
+#ifdef CONFIG_SOC_ESP32
 #include <soc/gpio_reg.h>
 #include <hal/gpio_hal.h>
+#endif
 
 /* GPIO specs for limit switches - direct GPIO definitions
    GPIO32 = Pitch Limit UP (input-only pin, safe from boot strapping)
@@ -45,6 +47,7 @@ bool limit_switch_is_pressed(int switch_id)
 {
     if (switch_id < 0 || switch_id >= 2) return false;
     
+#ifdef CONFIG_SOC_ESP32
     /* Read GPIO32/33 directly from ESP32 registers
        For GPIO32-39: use GPIO_IN1_REG (bits 0-7 map to GPIO32-39)
        Active low: 0 = pressed, 1 = open
@@ -60,6 +63,14 @@ bool limit_switch_is_pressed(int switch_id)
     
     /* pin_bit = 0 means pressed (active low), pin_bit = 1 means open */
     return (pin_bit == 0);
+#else
+    /* For non-ESP32 platforms, use Zephyr GPIO API */
+    if (gpio_dev == NULL) return false;
+    
+    int pin_num = (switch_id == LIMIT_PITCH_UP) ? 32 : 33;
+    int val = gpio_pin_get(gpio_dev, pin_num);
+    return (val == 0);  /* Active low */
+#endif
 }
 
 void limit_switch_callback(int switch_id)

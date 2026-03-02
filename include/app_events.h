@@ -18,6 +18,7 @@ typedef enum {
     ST_DEPLOYED,
     ST_SIMULATE,
     ST_COMPASS_MENU,
+    ST_OTA_MENU,
     ST__COUNT
 } state_id_t;
 

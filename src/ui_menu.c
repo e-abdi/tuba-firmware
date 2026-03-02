@@ -15,6 +15,7 @@
 #include "hw_limit_switches.h"
 #include "hw_hmc6343.h"
 #include "deploy.h"
+#include "ota_simple.h"
 
 /* MS5837 external pressure */
 void ms5837_stream_interactive(void);
@@ -41,7 +42,8 @@ void on_entry_MENU(void){
     app_printk("2) hardware test\r\n");
     app_printk("3) simulate\r\n");
     app_printk("4) deploy\r\n");
-    app_printk("Select [1-4]: ");
+    app_printk("5) OTA firmware update\r\n");
+    app_printk("Select [1-5]: ");
 }
 
 void on_entry_PARAMS_MENU(void){
@@ -87,6 +89,12 @@ void on_entry_COMPASS_MENU(void){
     app_printk("2) Continuous heading (q to quit)\r\n");
     app_printk("x) back\r\n");
     app_printk("Select [1,2,x]: ");
+}
+
+void on_entry_OTA_MENU(void){
+    app_printk("\r\n-- OTA Firmware Update --\r\n");
+    app_printk("Enter firmware URL (e.g., http://192.168.4.100:8080/firmware.bin)\r\n");
+    app_printk("or press 'x' to cancel: ");
 }
 
 void on_entry_LIMIT_TEST(void){
@@ -150,6 +158,8 @@ state_id_t on_event_PR_INPUT(const event_t *e){ return ST_PR_INPUT; }
 state_id_t on_event_PUMP_INPUT(const event_t *e){ return ST_PUMP_INPUT; }
 state_id_t on_event_LIMIT_TEST(const event_t *e){ return ST_LIMIT_TEST; }
 state_id_t on_event_RECOVERY(const event_t *e){ return ST_RECOVERY; }
+state_id_t on_event_COMPASS_MENU(const event_t *e){ return ST_COMPASS_MENU; }
+state_id_t on_event_OTA_MENU(const event_t *e){ return ST_OTA_MENU; }
 state_id_t on_event_DEPLOYED(const event_t *e){
     /* Check if deploy has completed (thread no longer running) */
     if (!deploy_is_running()) {
@@ -194,6 +204,7 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
             }
             return ST_DEPLOYED;
         }
+        if(line[0]=='5') return ST_OTA_MENU;
         /* Invalid input - stay in same state, print error, no state entry call */
         app_printk("Invalid.\r\n");
         return ST_MENU;
@@ -276,6 +287,35 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
         if(line[0]=='x' || line[0]=='X') { return ST_HWTEST_MENU; }
         app_printk("Invalid.\r\n");
         return ST_COMPASS_MENU;
+    }
+
+    if (state==ST_OTA_MENU){
+        if(line[0]=='x' || line[0]=='X') { return ST_MENU; }
+        
+        if(line[0]!='\0'){
+            app_printk("\r\n[OTA] Starting firmware download from: %s\r\n", line);
+            int ret = ota_simple_download(line);
+            if(ret == 0){
+                app_printk("[OTA] Download complete. Verifying...\r\n");
+                if(ota_simple_verify() == 0){
+                    app_printk("[OTA] Firmware verified! Rebooting to apply update...\r\n");
+                    k_msleep(1000);
+                    ota_simple_reboot();
+                } else {
+                    app_printk("[OTA] Verification failed. Returning to menu.\r\n");
+                    on_entry_MENU();
+                    return ST_MENU;
+                }
+            } else {
+                app_printk("[OTA] Download failed with error code: %d\r\n", ret);
+                on_entry_MENU();
+                return ST_MENU;
+            }
+        }
+        
+        app_printk("Invalid URL.\r\n");
+        on_entry_OTA_MENU();
+        return ST_OTA_MENU;
     }
 
     if (state==ST_PARAMS_MENU){

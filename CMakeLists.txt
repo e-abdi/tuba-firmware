@@ -19,6 +19,7 @@ target_sources(app PRIVATE
   src/hw_bmp180.c
   src/hw_gps.c
   src/hw_hmc6343.c
+  src/ota_simple.c
 )
 
 target_include_directories(app PRIVATE include)
