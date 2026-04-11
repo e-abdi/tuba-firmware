@@ -128,31 +128,26 @@ static void tick_cb(struct k_timer *tmr){ARG_UNUSED(tmr);post_event(EVT_TICK);}
 
 /* Line buffer */
 static char line_buf[APP_LINE_MAX];
-/* Make WiFi telnet the primary console input by default */
-#define USE_WIFI_CONSOLE
 static bool read_line_nonblock(char *buf, size_t buflen, bool *enter_only) {
     *enter_only = false;
-#ifdef USE_WIFI_CONSOLE
-    /* WiFi console: poll for a line from net console */
+
+    /* 1) Check WiFi/telnet console first */
     char line_tmp[128];
     if (net_console_poll_line(line_tmp, sizeof(line_tmp), K_NO_WAIT)) {
         size_t n = strnlen(line_tmp, sizeof(line_tmp));
         if (n == 0) {
             *enter_only = true;
-            /* Echo newline to UART for consistency */
             printk("\r\n");
             return false;
         }
         if (n >= buflen) n = buflen-1;
         memcpy(buf, line_tmp, n);
         buf[n] = '\0';
-        /* Echo line to UART console too */
         printk("%s\r\n", buf);
         return true;
     }
-    return false;
-#else
-    /* UART console: nonblocking reader */
+
+    /* 2) Fall back to UART console */
     static size_t idx = 0;
     uint8_t ch;
     while (uart_getch(&ch)) {
@@ -173,7 +168,6 @@ static bool read_line_nonblock(char *buf, size_t buflen, bool *enter_only) {
         }
     }
     return false;
-#endif
 }
 
 /* Current motor (used in PR_INPUT) */

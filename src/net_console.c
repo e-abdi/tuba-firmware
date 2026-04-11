@@ -3,6 +3,13 @@
 #include <zephyr/sys/mutex.h>
 #include <string.h>
 
+/* ===== WIFI CONSOLE CONFIGURATION =====
+   Uncomment the line below to DISABLE WiFi input (keep UART only)
+   WiFi output will still work, but only UART will accept commands
+*/
+#define DISABLE_WIFI_INPUT
+/* ===== END CONFIGURATION ===== */
+
 #define NET_CON_MAX 4
 #define NET_CON_MSG_SIZE 128
 #define NET_CON_MSG_COUNT 64
@@ -121,6 +128,11 @@ void net_console_ingest_bytes(const char *buf, size_t len)
 
 bool net_console_poll_line(char *out, size_t max_len, k_timeout_t timeout)
 {
+    /* If WiFi input is disabled, always return false (fall back to UART) */
+    #ifdef DISABLE_WIFI_INPUT
+    return false;
+    #endif
+
     if (!out || max_len < NET_CON_LINE_MAX) {
         /* Expect buffers of at least NET_CON_LINE_MAX */
         return false;

@@ -1,0 +1,4 @@
+/* MCUboot: match application UART0 baud rate for long cable runs */
+&uart0 {
+	current-speed = <9600>;
+};
