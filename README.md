@@ -4,6 +4,10 @@
 **Platform**: ESP32 DevKitC (WROOM-32U) running Zephyr RTOS v4.3.0  
 **Bootloader**: MCUboot with dual-slot OTA support
 
+The current implementation of the Tuba firmware loosely follows the operational model of a Seaglider. After power-up, the system waits for a defined period for user input before entering a recovery mode. In this mode, a simple console menu allows testing of individual hardware components, adjustment of mission parameters, and execution or simulation of dives.
+
+During normal operation, the glider performs a dive cycle and then returns to the surface, where it again waits for user input before repeating the mission.
+
 ## Quick Start
 
 ### Build Firmware
@@ -67,31 +71,7 @@ Device will:
 - Reboot and swap images
 - Run new firmware
 
-### What's Working
 
-✅ MCUboot bootloader integration (separate image)  
-✅ Dual-slot OTA with atomic swaps  
-✅ HTTP download with robust header parsing (split packets)  
-✅ Direct flash_area writes (no buffering issues)  
-✅ MCUboot header validation  
-✅ Verified firmware signature check  
-✅ Parameter persistence through OTA  
 
-### OTA Architecture
-
-```
-Download Phase:
-  Device (WiFi AP) ← HTTP GET ← Server
-  Device writes to slot1 (0x170000) via flash_area_write()
-
-Verification Phase:
-  Device reads MCUboot header from slot1
-  boot_read_bank_header() validates signature
-
-Apply Phase:
-  boot_request_upgrade(1) sets permanent swap flag
-  Device reboots → MCUboot swaps images
-  slot1 (new) → slot0 (running), old slot0 archived
-```
 
 
