@@ -22,6 +22,8 @@ struct app_params {
     uint16_t roll_time_s;          /* seconds */
 
     int16_t  desired_heading_deg;  /* degrees 0-359 */
+
+    uint16_t leak_threshold_mv;   /* mV — below this = leak detected */
 };
 
 int app_params_init(void);

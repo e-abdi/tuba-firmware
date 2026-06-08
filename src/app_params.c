@@ -42,6 +42,7 @@ static void app_params_set_defaults_internal(void)
     g_params.roll_time_s         = 5;
 
     g_params.desired_heading_deg = 180;
+    g_params.leak_threshold_mv   = 2000;
 }
 
 /* settings handler: load blob from NVS into g_params */

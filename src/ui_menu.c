@@ -14,6 +14,7 @@
 #include "hw_hmc6343.h"
 #include "hw_limit_switches.h"
 #include "hw_hmc6343.h"
+#include "hw_leak.h"
 #include "deploy.h"
 #include "ota_simple.h"
 
@@ -63,10 +64,11 @@ void on_entry_PARAMS_MENU(void){
     app_printk("c) Max roll [s]: %u\r\n", p->max_roll_s);
     app_printk("d) Roll time [s]: %u\r\n", p->roll_time_s);
     app_printk("e) Desired heading [deg]: %d\r\n", p->desired_heading_deg);
+    app_printk("f) Leak threshold [mV]: %u\r\n", p->leak_threshold_mv);
     app_printk("s) Save parameters\r\n");
     app_printk("r) Reset defaults\r\n");
     app_printk("x) Back\r\n");
-    app_printk("Select [1-9,a-e,s,r,x]: ");
+    app_printk("Select [1-9,a-f,s,r,x]: ");
 }
 
 void on_entry_HWTEST_MENU(void){
@@ -78,8 +80,9 @@ void on_entry_HWTEST_MENU(void){
     app_printk("5) External Pressure\r\n");
     app_printk("6) GPS\r\n");
     app_printk("7) Compass\r\n");
+    app_printk("8) Leak sensor\r\n");
     app_printk("x) back\r\n");
-    app_printk("Select [1-7,x]: ");
+    app_printk("Select [1-8,x]: ");
 }
 
 
@@ -236,6 +239,11 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
         }
         if(line[0]=='6') { gps_fix_interactive(); on_entry_HWTEST_MENU(); return ST_HWTEST_MENU; }
         if(line[0]=='7') { return ST_COMPASS_MENU; }
+        if(line[0]=='8') {
+            leak_detector_stream_interactive(app_params_get()->leak_threshold_mv);
+            on_entry_HWTEST_MENU();
+            return ST_HWTEST_MENU;
+        }
         if(line[0]=='x' || line[0]=='X') { return ST_MENU; }
         app_printk("Invalid.\r\n");
         return ST_HWTEST_MENU;
@@ -338,6 +346,7 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
         if(line[0]=='c' || line[0]=='C'){ current_param_index = 12; app_printk("Enter Max roll [s]: "); return ST_PARAM_INPUT; }
         if(line[0]=='d' || line[0]=='D'){ current_param_index = 13; app_printk("Enter Roll time [s]: "); return ST_PARAM_INPUT; }
         if(line[0]=='e' || line[0]=='E'){ current_param_index = 14; app_printk("Enter Desired heading [deg]: "); return ST_PARAM_INPUT; }
+        if(line[0]=='f' || line[0]=='F'){ current_param_index = 15; app_printk("Enter Leak threshold [mV]: "); return ST_PARAM_INPUT; }
         app_printk("Invalid.\r\n");
         return ST_PARAMS_MENU;
     }
@@ -362,6 +371,7 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
     case 12: p->max_roll_s = (uint16_t)val; break;
     case 13: p->roll_time_s = (uint16_t)val; break;
     case 14: p->desired_heading_deg = (int16_t)val; break;
+    case 15: p->leak_threshold_mv   = (uint16_t)val; break;
     default: break;
     }
         app_printk("Value updated (not yet saved).\r\n");

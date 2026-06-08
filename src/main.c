@@ -31,6 +31,7 @@
 #include "ota_simple.h"
 #include "build_info.h"
 #include "version.h"
+#include "hw_leak.h"
 
 /* Console UART - using _OR_NULL to avoid crash if not available */
 static const struct device *const uart_console = DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_console));
@@ -463,6 +464,45 @@ static void tcp_echo_server_task(void *p1, void *p2, void *p3)
 K_THREAD_DEFINE(tcp_echo, 4096, tcp_echo_server_task, NULL, NULL, NULL, 6, 0, 0);
 #endif
 
+/* ------------------- Leak Monitor Thread ------------------- */
+static void leak_monitor_task(void *p1, void *p2, void *p3)
+{
+    ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
+
+    k_sleep(K_SECONDS(5));  /* let system fully start */
+
+    bool was_leaking = false;
+    int64_t last_alert_ms = 0;
+
+    while (1) {
+        k_sleep(K_SECONDS(1));
+
+        int32_t mv;
+        if (leak_detector_read_mv(&mv) != 0) {
+            continue;
+        }
+
+        int32_t thresh = (int32_t)app_params_get()->leak_threshold_mv;
+        bool leaking = (mv < thresh);
+        int64_t now_ms = k_uptime_get();
+
+        if (leaking) {
+            /* Alert on first detection, then repeat every 30 s */
+            if (!was_leaking || (now_ms - last_alert_ms) >= 30000) {
+                app_printk("\r\n[LEAK] *** LEAK DETECTED *** %d mV (threshold %d mV)\r\n",
+                           mv, thresh);
+                last_alert_ms = now_ms;
+            }
+        } else if (was_leaking) {
+            app_printk("\r\n[LEAK] Leak cleared (%d mV)\r\n", mv);
+        }
+
+        was_leaking = leaking;
+    }
+}
+
+K_THREAD_DEFINE(leak_mon, 1024, leak_monitor_task, NULL, NULL, NULL, 8, 0, 0);
+
 /* ------------------- Main loop ------------------- */
 void main(void) {
     /* Boot banner */
@@ -495,6 +535,10 @@ void main(void) {
     printk("Initializing OTA subsystem...\r\n");
     (void)ota_simple_init();
     printk("OTA subsystem initialized\r\n");
+
+    printk("Initializing leak detector...\r\n");
+    (void)leak_detector_init();
+    printk("Leak detector initialized\r\n");
 
     printk("Main loop starting...\r\n");
     k_sleep(K_MSEC(100));

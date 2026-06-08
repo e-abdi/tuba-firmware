@@ -90,3 +90,10 @@
 &wifi {
 	status = "okay";
 };
+
+/* ===== ADC for leak detector ===== */
+/* adc0 = ESP32 ADC unit 1 (GPIO32-39); safe with WiFi active.
+ * Connect leak sensor signal to GPIO34 (ADC1 CH6). */
+&adc0 {
+	status = "okay";
+};

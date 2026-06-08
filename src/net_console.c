@@ -7,7 +7,7 @@
    Uncomment the line below to DISABLE WiFi input (keep UART only)
    WiFi output will still work, but only UART will accept commands
 */
-#define DISABLE_WIFI_INPUT
+// #define DISABLE_WIFI_INPUT
 /* ===== END CONFIGURATION ===== */
 
 #define NET_CON_MAX 4
