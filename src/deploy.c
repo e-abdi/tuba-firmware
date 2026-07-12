@@ -27,7 +27,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/atomic.h>
-#include <zephyr/drivers/uart.h>
 #include <stdbool.h>
 #include <math.h>
 
@@ -41,7 +40,7 @@
 #include "hw_motors.h"
 #include "hw_pump.h"
 #include "hw_gps.h"
-#include "net_console.h"
+#include "deploy.h"
 
 /* Physical constants for pressure -> depth conversion. */
 #define SEA_WATER_DENSITY_KG_M3 1025.0
@@ -217,36 +216,34 @@ static double real_depth_m(double surface_pa, const char *tag)
  * Operator interaction between cycles
  * ===================================================================== */
 
-/* Console UART for the between-cycles ENTER check. */
-static const struct device *const mission_uart =
-    DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_console));
+/* Stop request from the UI.
+ *
+ * IMPORTANT: the worker must NOT poll the consoles itself — the main UI
+ * loop reads them every ~10 ms and would win every race for the byte
+ * (this is exactly the bug where ENTER "did not register" during the
+ * 10-second window). Instead the main loop turns a bare ENTER into
+ * EVT_ENTER, the DEPLOYED/SIMULATE event handlers call
+ * deploy_notify_enter(), and the worker just watches this flag. */
+static atomic_t stop_requested = ATOMIC_INIT(0);
 
-/* Wait up to timeout_s for the operator to press ENTER on either console.
- * Returns true if ENTER was pressed (stop the mission). */
+void deploy_notify_enter(void)
+{
+    atomic_set(&stop_requested, 1);
+}
+
+/* Wait up to timeout_s for the operator's stop request (ENTER on either
+ * console, forwarded by the UI). Returns true if a stop was requested —
+ * including one made earlier, mid-cycle. */
 static bool enter_pressed_within(int timeout_s)
 {
     int64_t start = k_uptime_get();
-    while (k_uptime_get() - start < (int64_t)timeout_s * 1000) {
-        /* WiFi console: an empty line = ENTER. */
-        char line[128];
-        if (net_console_poll_line(line, sizeof(line), K_MSEC(100))) {
-            if (line[0] == '\0' || line[0] == '\r' || line[0] == '\n') {
-                return true;
-            }
-        }
-        /* UART console: a bare CR/LF keypress. */
-        if (console_uart_input_enabled() &&
-            mission_uart && device_is_ready(mission_uart)) {
-            unsigned char c;
-            while (uart_poll_in(mission_uart, &c) == 0) {
-                if (c == '\r' || c == '\n') {
-                    return true;
-                }
-            }
+    do {
+        if (atomic_get(&stop_requested)) {
+            return true;
         }
         k_sleep(K_MSEC(100));
-    }
-    return false;
+    } while (k_uptime_get() - start < (int64_t)timeout_s * 1000);
+    return atomic_get(&stop_requested) != 0;
 }
 
 /* Check if the external pressure sensor is available (menu pre-check). */
@@ -377,6 +374,9 @@ static void mission_run(bool simulated)
     struct app_params *p = app_params_get();
     const char *tag = simulated ? "[SIMULATE]" : "[DEPLOY]";
 
+    /* Forget any stop request left over from a previous mission. */
+    atomic_clear(&stop_requested);
+
     app_printk("%s starting sequence%s\r\n", tag,
                simulated ? " (pressure simulated)" : "");
 
@@ -432,7 +432,7 @@ static void mission_run(bool simulated)
             gps_fix_wait(30);
         }
 
-        app_printk("%s press ENTER within 10 seconds to stop, or another dive starts...\r\n", tag);
+        app_printk("%s press ENTER to stop (next dive starts in 10 seconds)...\r\n", tag);
         if (enter_pressed_within(10)) {
             app_printk("%s user requested stop\r\n", tag);
             break;

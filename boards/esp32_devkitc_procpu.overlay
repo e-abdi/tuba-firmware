@@ -29,17 +29,15 @@
 	status = "disabled";
 };
 
-/* UART2: Use for GPS / mirroring (TX=GPIO17, RX=GPIO16)
-   Note: ESP32 UART2 on GPIO17/16 requires runtime GPIO init or boot config.
-   Pinctrl overlay doesn't work reliably; using manual serial polling instead.
- */
+/* UART2: disabled — GPS is read over I2C (DDC) and the old console-mirror
+   code is gone, so GPIO16/17 are repurposed as the second I2C bus below. */
 &uart2 {
-	status = "okay";
-	current-speed = <9600>;
+	status = "disabled";
 };
 
 /* ===== I2C CONFIGURATION ===== */
-/* I2C0 on GPIO21(SDA)/GPIO22(SCL) for sensors */
+/* I2C0 on GPIO21(SDA)/GPIO22(SCL): main sensor bus
+   (MS5837 @0x76, BMP180 @0x77, HMC6343 @0x19, u-blox GPS @0x42) */
 &i2c0 {
 	status = "okay";
 	clock-frequency = <100000>; /* 100kHz */
@@ -50,13 +48,37 @@
 	};
 };
 
+/* I2C1 on GPIO16(SDA)/GPIO17(SCL): water-temperature bus.
+   The TSYS01 (Blue Robotics Celsius) lives here because its address (0x77)
+   collides with the BMP180 on i2c0 — a second bus sidesteps the conflict.
+   GPIO16/17 are adjacent on the DevKitC header. Internal pull-ups are
+   enabled; add external 4.7k pull-ups to 3.3V for long/wet cable runs. */
+&pinctrl {
+	i2c1_sensors: i2c1_sensors {
+		group1 {
+			pinmux = <I2C1_SDA_GPIO16>,
+				 <I2C1_SCL_GPIO17>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <100000>; /* 100kHz */
+	/* sda/scl-gpios are required by the ESP32 I2C driver for bus recovery */
+	sda-gpios = <&gpio0 16 GPIO_OPEN_DRAIN>;
+	scl-gpios = <&gpio0 17 GPIO_OPEN_DRAIN>;
+	pinctrl-0 = <&i2c1_sensors>;
+	pinctrl-names = "default";
+};
+
 &gpio0 {
 	status = "okay";
 };
 
-/* Note: I2C0 and UART2 pinctrl on ESP32 requires board-specific dtsi edits.
-   Using I2C0 on default ESP32 pins (21/22) and UART2 without pinctrl for now.
- */
 
 /* ===== GPIO Motor Control Pins ===== */
 

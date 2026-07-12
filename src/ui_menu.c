@@ -227,7 +227,12 @@ state_id_t on_event_COMPASS_MENU(const event_t *e){ ARG_UNUSED(e); return ST_COM
 state_id_t on_event_OTA_MENU(const event_t *e){ ARG_UNUSED(e); return ST_OTA_MENU; }
 
 state_id_t on_event_DEPLOYED(const event_t *e){
-    ARG_UNUSED(e);
+    /* The main loop owns all console input; forward ENTER to the mission
+     * worker so it can stop at the next surface window. (The worker must
+     * not poll the consoles itself — it would race the main loop.) */
+    if (e->id == EVT_ENTER) {
+        deploy_notify_enter();
+    }
     /* The mission runs in a worker thread; when it exits, go back to MENU. */
     if (!deploy_is_running()) {
         return ST_MENU;
@@ -236,7 +241,9 @@ state_id_t on_event_DEPLOYED(const event_t *e){
 }
 
 state_id_t on_event_SIMULATE(const event_t *e){
-    ARG_UNUSED(e);
+    if (e->id == EVT_ENTER) {
+        deploy_notify_enter();
+    }
     if (!simulate_is_running()) {
         return ST_MENU;
     }
