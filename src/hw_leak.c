@@ -1,6 +1,14 @@
+/*
+ * hw_leak.c — Leak detector (analog probe on the ADC)
+ *
+ * The leak module pulls its signal line to 3.3 V when dry; water across
+ * the probe pins drags the voltage down. A reading *below* the configured
+ * threshold therefore means "leak". The threshold is a mission parameter
+ * ("Leak threshold [mV]") and the continuous check runs in the
+ * leak-monitor thread in main.c.
+ */
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/adc.h>
-#include <zephyr/drivers/uart.h>
 #include "net_console.h"
 #include "hw_leak.h"
 
@@ -65,22 +73,6 @@ int leak_detector_read_mv(int32_t *voltage_mv)
     return 0;
 }
 
-static const struct device *uart_cons =
-    DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_console));
-
-static bool quit_leak(void)
-{
-    char line[128];
-    if (net_console_poll_line(line, sizeof(line), K_NO_WAIT)) {
-        return (line[0] == 'q' || line[0] == 'Q') && line[1] == '\0';
-    }
-    if (!device_is_ready(uart_cons)) {
-        return false;
-    }
-    uint8_t c;
-    return (uart_poll_in(uart_cons, &c) == 0 && (c == 'q' || c == 'Q'));
-}
-
 void leak_detector_stream_interactive(uint32_t threshold_mv)
 {
     if (!initialized && leak_detector_init() != 0) {
@@ -101,7 +93,7 @@ void leak_detector_stream_interactive(uint32_t threshold_mv)
         }
         next += 1000;
         while (k_uptime_get() < next) {
-            if (quit_leak()) {
+            if (console_quit_requested()) {
                 app_printk("[LEAK] exit\r\n");
                 return;
             }

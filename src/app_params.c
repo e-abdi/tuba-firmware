@@ -1,3 +1,9 @@
+/*
+ * app_params.c — Mission-parameter persistence (Zephyr settings/NVS)
+ *
+ * The whole app_params struct is stored as one settings blob under the key
+ * "params/blob". See app_params.h for the layout-change caveat.
+ */
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/device.h>
@@ -7,6 +13,7 @@
 
 #include "app_params.h"
 #include "app_print.h"
+#include "net_console.h"
 
 #define APP_PARAMS_SETTINGS_KEY "params/blob"
 
@@ -43,6 +50,15 @@ static void app_params_set_defaults_internal(void)
 
     g_params.desired_heading_deg = 180;
     g_params.leak_threshold_mv   = 2000;
+
+    g_params.console_input_mode  = CONSOLE_INPUT_BOTH;
+}
+
+/* Push parameter values into the subsystems that cache them. Called after
+ * every load/reset so the running system always matches g_params. */
+static void app_params_apply(void)
+{
+    console_input_mode_set((console_input_mode_t)g_params.console_input_mode);
 }
 
 /* settings handler: load blob from NVS into g_params */
@@ -113,13 +129,14 @@ int app_params_init(void)
         app_printk("[PARAM] loaded from NVS\r\n");
     } else if (rc == -ENOENT) {
         app_printk("[PARAM] no NVS data yet, using defaults\r\n");
-        return 0;
     } else {
         app_printk("[PARAM] settings_load_subtree failed: %d\r\n", rc);
         app_printk("[PARAM] continuing with defaults\r\n");
-        return 0;
     }
-    
+
+    /* Apply side effects (console input mode, ...) for whatever we ended
+     * up with — stored values or defaults. */
+    app_params_apply();
     return 0;
 }
 int app_params_save(void)
@@ -139,6 +156,7 @@ int app_params_save(void)
 void app_params_reset_defaults(void)
 {
     app_params_set_defaults_internal();
+    app_params_apply();
     app_printk("[PARAM] reset to defaults (not yet saved)\r\n");
 }
 

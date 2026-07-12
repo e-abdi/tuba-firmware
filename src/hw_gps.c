@@ -1,4 +1,20 @@
+/*
+ * hw_gps.c — u-blox GPS receiver over I2C (DDC protocol)
+ *
+ * The receiver streams standard NMEA sentences through its I2C "DDC" port:
+ *   0xFD/0xFE  number of buffered bytes available (big-endian, MSB @ 0xFE)
+ *   0xFF       data stream register (burst reads)
+ *
+ * We watch for $GxRMC sentences, which carry everything the glider needs:
+ *   - fix status (A = valid)
+ *   - latitude / longitude
+ *   - UTC time (field 1) and date (field 9)
+ *
+ * On every valid fix the system wall clock is re-anchored to GPS UTC via
+ * app_time_set_from_gps() — see app_time.h for the time architecture.
+ */
 #include "hw_gps.h"
+#include "app_time.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -23,22 +39,6 @@
 
 /* I2C (optional; guard at runtime) */
 static const struct device *i2c_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c0));
-
-/* Console UART for nonblocking keypress checks */
-static const struct device *const uart_console = DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_console));
-
-static bool quit_requested(void)
-{
-    /* Prefer net console (WiFi) input: requires ENTER */
-    char line[128];
-    if (net_console_poll_line(line, sizeof(line), K_NO_WAIT)) {
-        if ((line[0] == 'q' || line[0] == 'Q') && line[1] == '\0') return true;
-    }
-    if (uart_console == NULL || !device_is_ready(uart_console)) return false;
-    unsigned char c;
-    int rc = uart_poll_in(uart_console, &c);
-    return (rc == 0 && (c == 'q' || c == 'Q'));
-}
 
 static int ublox_len(uint16_t *out)
 {
@@ -98,7 +98,20 @@ static bool nmea_to_deg(const char *field, char hemi, double *out_deg)
     return true;
 }
 
-/* Parse a $--RMC line: out_status=A/V, out_lat/lon set when A */
+/* Extract "N" decimal digits starting at s; returns -1 on non-digits.
+ * Used for the fixed-width hhmmss / ddmmyy NMEA fields. */
+static int digits2(const char *s)
+{
+    if (!isdigit((unsigned char)s[0]) || !isdigit((unsigned char)s[1])) {
+        return -1;
+    }
+    return (s[0] - '0') * 10 + (s[1] - '0');
+}
+
+/* Parse a $--RMC line: out_status=A/V, out_lat/lon set when A.
+ *
+ * Side effect: when the sentence carries a valid fix with usable UTC
+ * time+date fields, the system wall clock is re-synced to GPS time. */
 static bool parse_rmc(const char *line, char *out_status, double *out_lat, double *out_lon, bool *has_coords)
 {
     if ((strncmp(line, "$GNRMC", 6) != 0 && strncmp(line, "$GPRMC", 6) != 0) ||
@@ -106,20 +119,25 @@ static bool parse_rmc(const char *line, char *out_status, double *out_lat, doubl
         return false;
     }
 
+    /* RMC field map: 1=UTC hhmmss.ss, 2=status, 3=lat, 4=N/S,
+     *                5=lon, 6=E/W, 9=date ddmmyy */
     int field = 0;
     char status = 'V';
+    char utc[16] = {0}, date[12] = {0};
     char lat[20] = {0}, lon[20] = {0};
     char ns='N', ew='E';
-    size_t idx_lat=0, idx_lon=0;
+    size_t idx_lat=0, idx_lon=0, idx_utc=0, idx_date=0;
 
     for (size_t i=0; line[i] && line[i] != '*'; i++) {
         char c = line[i];
         if (c == ',') { field++; continue; }
-        if (field == 2) { status = c; }
+        if (field == 1) { if (idx_utc < sizeof(utc)-1) utc[idx_utc++] = c; }
+        else if (field == 2) { status = c; }
         else if (field == 3) { if (idx_lat < sizeof(lat)-1) lat[idx_lat++] = c; }
         else if (field == 4) { if (c=='N'||c=='S') ns = c; else return false; }
         else if (field == 5) { if (idx_lon < sizeof(lon)-1) lon[idx_lon++] = c; }
         else if (field == 6) { if (c=='E'||c=='W') ew = c; else return false; }
+        else if (field == 9) { if (idx_date < sizeof(date)-1) date[idx_date++] = c; }
     }
 
     *out_status = status;
@@ -135,6 +153,21 @@ static bool parse_rmc(const char *line, char *out_status, double *out_lat, doubl
             *out_lat = dlat;
             *out_lon = dlon;
             *has_coords = true;
+        }
+
+        /* Sync the system clock: needs hhmmss(.ss) and ddmmyy, both
+         * fixed-width numeric. app_time rejects implausible values. */
+        if (idx_utc >= 6 && idx_date >= 6) {
+            int hh  = digits2(utc);
+            int mi  = digits2(utc + 2);
+            int ss  = digits2(utc + 4);
+            int day = digits2(date);
+            int mon = digits2(date + 2);
+            int yy  = digits2(date + 4);
+            if (hh >= 0 && mi >= 0 && ss >= 0 &&
+                day >= 0 && mon >= 0 && yy >= 0) {
+                (void)app_time_set_from_gps(hh, mi, ss, day, mon, yy);
+            }
         }
     }
     return true;
@@ -161,7 +194,7 @@ void gps_fix_interactive(void)
     int64_t last_tick = 0;
 
     while (1) {
-        if (quit_requested()) {
+        if (console_quit_requested()) {
             app_printk("[GPS] exit requested → back to menu\r\n");
             return;
         }

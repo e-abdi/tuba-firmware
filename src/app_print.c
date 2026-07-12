@@ -1,3 +1,16 @@
+/*
+ * app_print.c — Console output fan-out
+ *
+ * app_printk() is the one output call used across the firmware. Every
+ * message goes to:
+ *   1. the Zephyr console (UART0) via vprintk, and
+ *   2. all connected WiFi telnet clients via net_console_write()
+ *      (and UART1, if a board ever enables it — disabled on this one).
+ *
+ * A prototype for app_printk is force-included into every source file
+ * (see CMakeLists.txt), which is why call sites don't include this header
+ * explicitly.
+ */
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/drivers/uart.h>

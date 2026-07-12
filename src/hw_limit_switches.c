@@ -1,7 +1,19 @@
+/*
+ * hw_limit_switches.c — Pitch-mass travel limit switches (safety)
+ *
+ * Two active-low switches stop the pitch mass at the ends of its rail:
+ *   GPIO32 = pitch limit UP, GPIO33 = pitch limit DOWN (input-only pins,
+ *   safe from ESP32 boot strapping).
+ *
+ * Detection is belt-and-braces: a GPIO interrupt records triggers, and the
+ * main loop calls limit_switches_check_and_stop() every event cycle, which
+ * reads the pin levels directly (via the ESP32 GPIO_IN1 register — the
+ * safest read path from any context) and, on a hit, stops the pitch motor
+ * and backs it off for one second to release the switch.
+ */
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/sys/printk.h>
-#include <zephyr/drivers/uart.h>
 #include <zephyr/devicetree.h>
 
 #include "hw_limit_switches.h"
@@ -15,11 +27,14 @@
 #include <hal/gpio_hal.h>
 #endif
 
-/* GPIO specs for limit switches - direct GPIO definitions
-   GPIO32 = Pitch Limit UP (input-only pin, safe from boot strapping)
-   GPIO33 = Pitch Limit DOWN (input-only pin, safe from boot strapping)
-*/
-static struct device *gpio_dev = NULL;
+/* GPIO32/33 belong to the ESP32's *second* GPIO port (gpio1 = pins 32-39),
+ * addressed there as pins 0 and 1. Using gpio0 with pin numbers 32/33
+ * silently truncates the pin mask to zero — a real bug in earlier firmware
+ * (the polling path via direct register reads is what made it work).
+ */
+#define LIMIT_UP_PIN    0   /* GPIO32 on port gpio1 */
+#define LIMIT_DOWN_PIN  1   /* GPIO33 on port gpio1 */
+static const struct device *gpio_dev = NULL;
 
 struct limit_switch_state {
     uint32_t pin;
@@ -66,8 +81,8 @@ bool limit_switch_is_pressed(int switch_id)
 #else
     /* For non-ESP32 platforms, use Zephyr GPIO API */
     if (gpio_dev == NULL) return false;
-    
-    int pin_num = (switch_id == LIMIT_PITCH_UP) ? 32 : 33;
+
+    int pin_num = (switch_id == LIMIT_PITCH_UP) ? LIMIT_UP_PIN : LIMIT_DOWN_PIN;
     int val = gpio_pin_get(gpio_dev, pin_num);
     return (val == 0);  /* Active low */
 #endif
@@ -118,67 +133,49 @@ void limit_switches_check_and_stop(void)
     }
 }
 
+/* Configure one switch pin: input with pull-up, interrupt on press
+ * (active edge), and register its ISR callback. */
+static int limit_switch_setup_one(int switch_id, int pin, const char *name)
+{
+    int err = gpio_pin_configure(gpio_dev, pin, GPIO_INPUT | GPIO_PULL_UP);
+    if (err) {
+        app_printk("[LIMIT] Failed to configure %s: %d\r\n", name, err);
+        return err;
+    }
+
+    gpio_init_callback(&g_limit_switches[switch_id].callback, limit_switch_isr, BIT(pin));
+    err = gpio_add_callback(gpio_dev, &g_limit_switches[switch_id].callback);
+    if (err) {
+        app_printk("[LIMIT] Failed to add %s callback: %d\r\n", name, err);
+        return err;
+    }
+
+    err = gpio_pin_interrupt_configure(gpio_dev, pin, GPIO_INT_EDGE_TO_ACTIVE);
+    if (err) {
+        app_printk("[LIMIT] Failed to configure %s interrupt: %d\r\n", name, err);
+        return err;
+    }
+
+    app_printk("[LIMIT] Pitch limit %s initialized\r\n", name);
+    return 0;
+}
+
 int limit_switches_init(void)
 {
-    int err = 0;
+    int err;
 
-    /* Get GPIO0 device using device tree */
-    gpio_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(gpio0));
-    if (!gpio_dev) {
-        app_printk("[LIMIT] GPIO_0 device not found\r\n");
+    /* GPIO32/33 are on the second GPIO port (gpio1, pins 0/1). */
+    gpio_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(gpio1));
+    if (!gpio_dev || !device_is_ready(gpio_dev)) {
+        app_printk("[LIMIT] gpio1 device not ready\r\n");
         return -ENODEV;
     }
 
-    if (!device_is_ready(gpio_dev)) {
-        app_printk("[LIMIT] GPIO_0 device not ready\r\n");
-        return -ENODEV;
-    }
-
-    /* Initialize pitch limit up (GPIO32) */
-    err = gpio_pin_configure(gpio_dev, 32, GPIO_INPUT | GPIO_PULL_UP);
+    err = limit_switch_setup_one(LIMIT_PITCH_UP, LIMIT_UP_PIN, "UP (GPIO32)");
     if (err) {
-        app_printk("[LIMIT] Failed to configure GPIO32: %d\r\n", err);
         return err;
     }
-
-    gpio_init_callback(&g_limit_switches[LIMIT_PITCH_UP].callback, limit_switch_isr, 1ULL << 32);
-    err = gpio_add_callback(gpio_dev, &g_limit_switches[LIMIT_PITCH_UP].callback);
-    if (err) {
-        app_printk("[LIMIT] Failed to add GPIO32 callback: %d\r\n", err);
-        return err;
-    }
-
-    err = gpio_pin_interrupt_configure(gpio_dev, 32, GPIO_INT_EDGE_TO_ACTIVE);
-    if (err) {
-        app_printk("[LIMIT] Failed to configure GPIO32 interrupt: %d\r\n", err);
-        return err;
-    }
-
-    app_printk("[LIMIT] Pitch limit UP (GPIO32) initialized\r\n");
-
-    /* Initialize pitch limit down (GPIO33) */
-    err = gpio_pin_configure(gpio_dev, 33, GPIO_INPUT | GPIO_PULL_UP);
-    if (err) {
-        app_printk("[LIMIT] Failed to configure GPIO33: %d\r\n", err);
-        return err;
-    }
-
-    gpio_init_callback(&g_limit_switches[LIMIT_PITCH_DOWN].callback, limit_switch_isr, 1ULL << 33);
-    err = gpio_add_callback(gpio_dev, &g_limit_switches[LIMIT_PITCH_DOWN].callback);
-    if (err) {
-        app_printk("[LIMIT] Failed to add GPIO33 callback: %d\r\n", err);
-        return err;
-    }
-
-    err = gpio_pin_interrupt_configure(gpio_dev, 33, GPIO_INT_EDGE_TO_ACTIVE);
-    if (err) {
-        app_printk("[LIMIT] Failed to configure GPIO33 interrupt: %d\r\n", err);
-        return err;
-    }
-
-    app_printk("[LIMIT] Pitch limit DOWN (GPIO33) initialized\r\n");
-
-    return 0;
+    return limit_switch_setup_one(LIMIT_PITCH_DOWN, LIMIT_DOWN_PIN, "DOWN (GPIO33)");
 }
 
 /**

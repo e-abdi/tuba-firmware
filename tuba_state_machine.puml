@@ -4,123 +4,117 @@ title Tuba Glider Application State Machine
 [*] --> POWERUP_WAIT
 
 POWERUP_WAIT --> MENU: EVT_ENTER\n(user presses ENTER)
-POWERUP_WAIT --> DEPLOYED: EVT_TIMEOUT\n(60 sec countdown expires)
+POWERUP_WAIT --> DEPLOYED: EVT_TIMEOUT\n(startup countdown expires)
 
 MENU --> PARAMS_MENU: "1" / parameters
 MENU --> HWTEST_MENU: "2" / hardware test
 MENU --> SIMULATE: "3" / simulate deployment
-MENU --> DEPLOYED: "4" / deploy\n[sensor_available]
+MENU --> DEPLOYED: "4" / deploy\n[external pressure sensor present]
 MENU --> OTA_MENU: "5" / firmware update
 
-PARAMS_MENU --> PARAM_INPUT: "1-e" / select parameter
-PARAMS_MENU --> PARAMS_MENU: "s" / save\n"r" / reset
+PARAMS_MENU --> PARAM_INPUT: "1-g" / select parameter
+PARAMS_MENU --> PARAMS_MENU: "s" / save\n"r" / reset defaults
 PARAMS_MENU --> MENU: "x" / back
 
-PARAM_INPUT --> PARAMS_MENU: parse_input() / [success or failure]
+PARAM_INPUT --> PARAMS_MENU: value entered / [accepted or rejected]
 
 HWTEST_MENU --> PR_MENU: "1" / pitch & roll
 HWTEST_MENU --> PUMP_INPUT: "2" / pump test
-HWTEST_MENU --> HWTEST_MENU: "3" / show positions\n"4" / internal pressure\n"5" / external pressure\n"6" / GPS
+HWTEST_MENU --> HWTEST_MENU: "3" positions\n"4" internal pressure\n"5" external pressure\n"6" GPS\n"8" leak sensor
 HWTEST_MENU --> COMPASS_MENU: "7" / compass
+HWTEST_MENU --> SENSORS_MENU: "9" / sensors
 HWTEST_MENU --> MENU: "x" / back
 
-PR_MENU --> PR_INPUT: "1" / roll motor\n"2" / pitch motor
+SENSORS_MENU --> SENSORS_MENU: "1" temperature self-test\n"2" temperature stream\n"3" I2C scan report
+SENSORS_MENU --> HWTEST_MENU: "x" / back
+
+PR_MENU --> PR_INPUT: "1" roll motor\n"2" pitch motor
 PR_MENU --> PR_MENU: "3" / limit switch test
 PR_MENU --> HWTEST_MENU: "x" / back
 
-PR_INPUT --> PR_INPUT: parse_motor_value() / [-10..10 sec]
+PR_INPUT --> PR_INPUT: integer / run motor [-10..10 s]
 PR_INPUT --> PR_MENU: "q" / quit
 
-PUMP_INPUT --> PUMP_INPUT: parse_pump_value() / [-10..10 sec]
+PUMP_INPUT --> PUMP_INPUT: integer / run pump [-10..10 s]
 PUMP_INPUT --> HWTEST_MENU: "q" / quit
 
-COMPASS_MENU --> COMPASS_MENU: "1" / calibrate\n"2" / stream heading
+COMPASS_MENU --> COMPASS_MENU: "1" calibrate\n"2" stream heading
 COMPASS_MENU --> HWTEST_MENU: "x" / back
 
 OTA_MENU --> MENU: "x" / cancel
-OTA_MENU --> MENU: ota_download_error / [error]
-OTA_MENU --> [*]: ota_reboot / [success]
+OTA_MENU --> MENU: download or verify failed
+OTA_MENU --> [*]: verified / reboot into new firmware
 
-DEPLOYED --> MENU: deploy_complete / [async thread done]
-DEPLOYED --> RECOVERY: deploy_error / [exception/error]
+DEPLOYED --> MENU: mission complete\n[worker thread finished]
 
-SIMULATE --> MENU: simulate_complete / [async thread done]
+SIMULATE --> MENU: simulation complete\n[worker thread finished]
 
-RECOVERY --> DEPLOYED: "resume" / resume deployment
+RECOVERY --> DEPLOYED: "resume"
 RECOVERY --> RECOVERY: (other input)
 
 note right of POWERUP_WAIT
-    Countdown timer (60 sec)
+    Startup countdown
+    (STARTUP_TIMEOUT_SEC = 600 s)
     waiting for user intervention.
     Prevents accidental deployment.
-    
-    on_entry: starts timeout timer
-    on_exit: stops timer
+
+    on_entry: prints countdown
+    on_exit: newline cleanup
 end note
 
 note right of MENU
-    Main control center.
-    User selects mission mode:
-    - Configure parameters
-    - Test hardware
-    - Deploy or simulate
-    - Update firmware
+    Main control center. Header shows
+    build number, UTC time (+source)
+    and console input mode.
 end note
 
 note right of PARAMS_MENU
-    Edit deployment parameters:
-    - Dive depth, timing
-    - Motor positions
-    - Pump timing
-    - Compass heading
-    
-    Parameters stored in
-    non-volatile memory
+    Edit mission parameters:
+    - dive depth / timing
+    - pitch/roll/pump positions
+    - desired heading
+    - leak threshold
+    - console input mode (UART/WiFi)
+
+    Stored in NVS; "s" saves,
+    edits alone are RAM-only.
 end note
 
-note right of HWTEST_MENU
-    Hardware diagnostics:
-    - Motor control (pitch, roll)
-    - Pump control
-    - Pressure sensors
-    - GPS fix
-    - Compass calibration
-    - Limit switches
+note right of SENSORS_MENU
+    Sensor diagnostics:
+    - TSYS01 water temperature
+      self-test (probe, PROM,
+      sample plausibility)
+    - live temperature stream
+    - expected-sensor I2C scan
+      (connected vs missing)
 end note
 
 note right of DEPLOYED
-    Active deployment state.
-    Runs asynchronous mission:
-    1. Wait deploy_wait_s
-    2. Dive to depth
-    3. Execute maneuver profile
-    4. Return to surface
-    
-    on_entry: spawns worker thread
-    Uses external pressure sensor
+    Mission worker thread:
+    1. surface reference pressure
+    2. wait deploy_wait_s
+    3. GPS fix (syncs UTC clock)
+    4. dive to depth / timeout
+    5. climb to surface
+    6. GPS fix, 10 s ENTER window
+    7. repeat until ENTER
+
+    [SENS] telemetry every second:
+    UTC timestamp, hull pressure,
+    depth, water temp, attitude.
 end note
 
 note right of SIMULATE
-    Lab testing mode.
-    Runs same sequence as DEPLOYED
-    but with simulated pressure.
-    Useful for testing without
-    accessing real pressure sensor.
+    Same worker as DEPLOYED but
+    depth is synthetic (0.5 m/s
+    sink/rise) — bench testing
+    without a pressure sensor.
 end note
 
 note right of RECOVERY
-    Error recovery state.
-    Waits for "resume" command
-    to retry deployment with
-    same parameters.
-end note
-
-note right of OTA_MENU
-    Over-The-Air firmware update.
-    User provides URL to binary.
-    On success: verifies and
-    reboots to apply update.
-    On failure: returns to MENU.
+    Error hold state. Waits for
+    "resume" to re-deploy.
 end note
 
 @enduml

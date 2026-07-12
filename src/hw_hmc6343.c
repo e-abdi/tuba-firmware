@@ -1,33 +1,30 @@
-
+/*
+ * hw_hmc6343.c — HMC6343 tilt-compensated compass
+ *
+ * Provides heading/pitch/roll for navigation and heading hold. The device
+ * is command-driven over I2C (address 0x19):
+ *   0x50  post heading/pitch/roll (6 bytes, tenths of a degree)
+ *   0x71 / 0x7E  enter / exit user hard-iron calibration
+ *   0xE1 / 0xF1  EEPROM read / write (used for mounting orientation)
+ *
+ * On init the mounting orientation is forced to "upright flat" (OM1 bits
+ * 2:0 = 100) in EEPROM so readings survive power cycles in the correct
+ * frame for this hull.
+ */
 #include "hw_hmc6343.h"
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk.h>
 #include <string.h>
 #include <errno.h>
 #include "net_console.h"
 
 static const struct device *const i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c0));
-static const struct device *const uart_console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
 #define HMC6343_ADDR 0x19
 
 static inline int i2c_write_cmd(uint8_t cmd){ return i2c_write(i2c_dev, &cmd, 1, HMC6343_ADDR); }
-
-static bool kbhit_quit(void){
-    /* Prefer net console (WiFi) input: requires ENTER */
-    char line[128];
-    if (net_console_poll_line(line, sizeof(line), K_NO_WAIT)) {
-        if ((line[0] == 'q' || line[0] == 'Q') && line[1] == '\0') return true;
-    }
-    /* Fallback to UART console single-key polling */
-    if (!device_is_ready(uart_console)) return false;
-    unsigned char c;
-    while (uart_fifo_read(uart_console, &c, 1) == 1) { if (c=='q'||c=='Q') return true; }
-    return false;
-}
 
 static int eeprom_read(uint8_t addr, uint8_t *val){
     uint8_t cmd[2] = {0xE1, addr};
@@ -74,7 +71,7 @@ void hmc6343_user_calibrate_interactive(void){
     if (hmc6343_init() != 0) return;
     app_printk("[HMC6343] Entering user calibration (0x71). Rotate device; press 'q' then ENTER to exit.\r\n");
     if (i2c_write_cmd(0x71) != 0) { app_printk("[HMC6343] Failed to enter calibration\r\n"); return; }
-    while (!kbhit_quit()) { k_sleep(K_MSEC(50)); }
+    while (!console_quit_requested()) { k_sleep(K_MSEC(50)); }
     app_printk("[HMC6343] Exiting calibration (0x7E)...\r\n");
     (void)i2c_write_cmd(0x7E);
     k_msleep(60);
@@ -96,7 +93,7 @@ void hmc6343_stream_heading_interactive(void){
         int16_t roll  = (buf[4]<<8) | buf[5];
         app_printk("Heading=%.1f°, Pitch=%.1f°, Roll=%.1f°\r\n", head/10.0, (int16_t)pitch/10.0, (int16_t)roll/10.0);
         next += 1000;
-        while (k_uptime_get() < next) { if (kbhit_quit()) { app_printk("[HMC6343] exit requested → back to menu\r\n"); return; } k_sleep(K_MSEC(20)); }
+        while (k_uptime_get() < next) { if (console_quit_requested()) { app_printk("[HMC6343] exit requested → back to menu\r\n"); return; } k_sleep(K_MSEC(20)); }
     }
 }
 

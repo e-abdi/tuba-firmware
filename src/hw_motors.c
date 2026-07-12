@@ -1,16 +1,26 @@
-
+/*
+ * hw_motors.c — Pitch and roll mass-shifter motors (H-bridge GPIO control)
+ *
+ * The glider trims attitude by sliding internal masses with two DC motors,
+ * each driven by an H-bridge with two direction inputs (no EN pins; the
+ * bridges are always enabled via external pull-ups).
+ *
+ * Positions are dead-reckoned in "seconds of travel from zero": running a
+ * motor for N seconds in one direction adds/subtracts N. There is no
+ * encoder — the pitch limit switches (hw_limit_switches.c) are the only
+ * absolute reference, so positions drift if a move is interrupted.
+ *
+ * Timed moves auto-stop from a delayed work item, so callers never block
+ * while a motor runs.
+ *
+ * Devicetree aliases expected: roll-in-1/2, pitch-in-1/2.
+ */
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/atomic.h>
 
 #include "hw_motors.h"
-
-/* Devicetree aliases expected:
- *   roll-in1, roll-in2
- *   pitch-in1, pitch-in2
- * No enable pins required; H-bridges are always enabled via external pull-ups.
- */
 
 #define HAVE_ROLL_IN1  DT_NODE_HAS_STATUS(DT_ALIAS(roll_in_1), okay)
 #define HAVE_ROLL_IN2  DT_NODE_HAS_STATUS(DT_ALIAS(roll_in_2), okay)

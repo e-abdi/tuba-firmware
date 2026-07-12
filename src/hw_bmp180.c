@@ -1,9 +1,20 @@
-
+/*
+ * hw_bmp180.c — BMP180 internal (hull) pressure sensor
+ *
+ * Monitors the pressure inside the pressure hull: a slow rise can indicate
+ * a leak; a drop can indicate a failing seal/vacuum. Standard Bosch BMP180
+ * protocol: read the factory calibration EEPROM once, then trigger and
+ * read uncompensated temperature + pressure and run the datasheet
+ * compensation math (integer-only).
+ *
+ * I2C address 0x77 — NOTE: this collides with the TSYS01 (Blue Robotics
+ * Celsius) default address. Both cannot share the bus; the boot sensor
+ * scan (sensors.c) reports which one actually answers.
+ */
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk.h>
 #include <stdint.h>
 #include <string.h>
@@ -17,9 +28,6 @@
 
 /* Oversampling (we use ultra low power = 0) */
 #define OSS 0
-
-/* Console UART (for non-blocking 'q' detection) */
-static const struct device *const uart_cons = DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_console));
 
 /* I2C0 for sensors (optional; guard at runtime) */
 static const struct device *const i2c0_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c0));
@@ -151,19 +159,6 @@ int bmp180_init(void)
     return 0;
 }
 
-static bool quit_requested(void)
-{
-    /* Prefer net console (WiFi) input: requires ENTER */
-    char line[128];
-    if (net_console_poll_line(line, sizeof(line), K_NO_WAIT)) {
-        if ((line[0] == 'q' || line[0] == 'Q') && line[1] == '\0') return true;
-    }
-    if (!device_is_ready(uart_cons)) return false;
-    uint8_t c;
-    int rc = uart_poll_in(uart_cons, &c);
-    return (rc == 0 && (c == 'q' || c == 'Q'));
-}
-
 void bmp180_stream_interactive(void)
 {
     if (bmp180_init() != 0) {
@@ -195,7 +190,7 @@ void bmp180_stream_interactive(void)
 
         next += 1000;
         while (k_uptime_get() < next) {
-            if (quit_requested()) {
+            if (console_quit_requested()) {
                 app_printk("[Internal Pressure] exit requested → back to menu\r\n");
                 return;
             }

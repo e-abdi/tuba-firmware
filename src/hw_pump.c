@@ -1,3 +1,14 @@
+/*
+ * hw_pump.c — Variable-buoyancy pump (H-bridge GPIO control)
+ *
+ * The pump moves ballast water/oil in (+) or out (-) to change buoyancy.
+ * Same control model as the mass motors (hw_motors.c): two H-bridge
+ * direction pins, timed runs that auto-stop from a delayed work item, and
+ * a dead-reckoned position in "seconds of travel from zero".
+ *
+ * Devicetree aliases expected: pump-in-1, pump-in-2. Boards without them
+ * get no-op stubs so the rest of the firmware links unchanged.
+ */
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/sys/printk.h>

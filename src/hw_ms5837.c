@@ -1,37 +1,37 @@
-
+/*
+ * hw_ms5837.c — MS5837 external (water) pressure + temperature sensor
+ *
+ * The primary depth sensor (e.g. Blue Robotics Bar30). Custom register-level
+ * driver — the Zephyr sensor driver is intentionally not used (see prj.conf).
+ *
+ * Protocol (MEAS command scheme, same family as the TSYS01):
+ *   0x1E        soft reset
+ *   0xA0..0xAC  calibration PROM (7 words, CRC-4 in the top nibble of word 0)
+ *   0x4A / 0x5A start pressure (D1) / temperature (D2) conversion, OSR=8192
+ *   0x00        read 24-bit ADC result
+ *
+ * Compensation follows the Blue Robotics reference implementation with
+ * second-order corrections; the model (30BA vs 02BA) is inferred from the
+ * C1 sensitivity coefficient and changes the scaling constants.
+ *
+ * The ESP32 I2C controller occasionally wedges on long streams, hence the
+ * defensive bus reconfiguration, retries and periodic soft resets.
+ */
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk.h>
 #include <string.h>
 #include <errno.h>
 #include "net_console.h"
 
-/* Resolve MS5837 device by compatible, independent of node label. */
+/* Sensor bus (all sensors share i2c0). */
 static const struct device *const i2c_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c0));
 static uint8_t g_ms5837_addr = 0x76; /* Try 0x76 first, fallback to 0x77 */
-static uint16_t g_prom[8];
+static uint16_t g_prom[8];           /* calibration coefficients C0..C6 */
 static bool g_prom_ok = false;
-static uint8_t g_model = 255; /* 0=30BA, 1=02BA, 255=unrecognised */
-
-/* Console UART for nonblocking keypress checks */
-static const struct device *const uart_console = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
-
-/* Check if user pressed 'q' (or 'Q') to quit */
-static bool quit_requested(void)
-{
-    /* Prefer net console (WiFi) input: requires ENTER */
-    char line[128];
-    if (net_console_poll_line(line, sizeof(line), K_NO_WAIT)) {
-        if ((line[0] == 'q' || line[0] == 'Q') && line[1] == '\0') return true;
-    }
-    if (!device_is_ready(uart_console)) return false;
-    unsigned char c;
-    int rc = uart_poll_in(uart_console, &c);
-    return (rc == 0 && (c == 'q' || c == 'Q'));
-}
+static uint8_t g_model = 255;        /* 0=30BA, 1=02BA, 255=unrecognised */
 
 /* CRC-4 calculation for MS5637/MS5837 PROM */
 static uint8_t ms_crc4(uint16_t prom[8])
@@ -399,7 +399,7 @@ void ms5837_stream_interactive(void)
                 error_count = 0;
                 next += 1000;
                 while (k_uptime_get() < next) {
-                    if (quit_requested()) {
+                    if (console_quit_requested()) {
                         app_printk("[External Pressure] exit requested → back to menu\r\n");
                         return;
                     }
@@ -441,7 +441,7 @@ void ms5837_stream_interactive(void)
 
         next += 1000;
         while (k_uptime_get() < next) {
-            if (quit_requested()) {
+            if (console_quit_requested()) {
                 app_printk("[External Pressure] exit requested → back to menu\r\n");
                 return;
             }
