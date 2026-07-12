@@ -1,4 +1,20 @@
-/* MCUboot: match application UART0 baud rate for long cable runs */
+/*
+ * MCUboot (bootloader image) devicetree overlay.
+ *
+ * 1. The bootloader must link/flash into its own partition (0x1000), not
+ *    the application slot: the board dts sets zephyr,code-partition to
+ *    slot0, which every image inherits unless overridden. Without this,
+ *    `west flash` writes MCUboot and the app to the same 0x20000 offset,
+ *    each clobbering the other.
+ * 2. UART0 at 9600 baud so bootloader console output matches the
+ *    application (long/noisy cable runs into the hull).
+ */
+/ {
+	chosen {
+		zephyr,code-partition = &boot_partition;
+	};
+};
+
 &uart0 {
 	current-speed = <9600>;
 };
