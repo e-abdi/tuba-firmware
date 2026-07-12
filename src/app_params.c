@@ -49,7 +49,12 @@ static void app_params_set_defaults_internal(void)
     g_params.roll_time_s         = 5;
 
     g_params.desired_heading_deg = 180;
-    g_params.leak_threshold_mv   = 2000;
+
+    /* 0 = leak monitoring disabled. A disconnected ADC pin floats at a few
+     * hundred mV and would false-alarm against any real threshold, so the
+     * default is "off"; set a threshold (e.g. 2000) once the sensor is
+     * physically installed. */
+    g_params.leak_threshold_mv   = 0;
 
     g_params.console_input_mode  = CONSOLE_INPUT_BOTH;
 }

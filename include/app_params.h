@@ -39,7 +39,7 @@ struct app_params {
     int16_t  desired_heading_deg;  /* course to hold, 0-359 degrees true */
 
     /* --- Safety --- */
-    uint16_t leak_threshold_mv;    /* leak ADC below this = leak detected */
+    uint16_t leak_threshold_mv;    /* leak ADC below this = leak; 0 = monitoring off */
 
     /* --- Console --- */
     uint8_t  console_input_mode;   /* console_input_mode_t: 0=both 1=UART 2=WiFi */

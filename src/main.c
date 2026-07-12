@@ -373,12 +373,19 @@ static void leak_monitor_task(void *p1, void *p2, void *p3)
     while (1) {
         k_sleep(K_SECONDS(1));
 
+        /* Threshold 0 = monitoring disabled (default: no sensor installed;
+         * a floating ADC pin would false-alarm otherwise). */
+        int32_t thresh = (int32_t)app_params_get()->leak_threshold_mv;
+        if (thresh == 0) {
+            was_leaking = false;
+            continue;
+        }
+
         int32_t mv;
         if (leak_detector_read_mv(&mv) != 0) {
             continue;
         }
 
-        int32_t thresh = (int32_t)app_params_get()->leak_threshold_mv;
         bool leaking = (mv < thresh);
         int64_t now_ms = k_uptime_get();
 

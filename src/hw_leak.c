@@ -80,13 +80,18 @@ void leak_detector_stream_interactive(uint32_t threshold_mv)
         return;
     }
     app_printk("[LEAK] Streaming — press 'q' then ENTER to quit\r\n");
-    app_printk("[LEAK] Threshold: %u mV  (below = LEAK)\r\n", threshold_mv);
+    if (threshold_mv == 0) {
+        app_printk("[LEAK] Threshold: 0 (monitoring OFF — raw readings only)\r\n");
+    } else {
+        app_printk("[LEAK] Threshold: %u mV  (below = LEAK)\r\n", threshold_mv);
+    }
 
     int64_t next = k_uptime_get();
     while (1) {
         int32_t mv;
         if (leak_detector_read_mv(&mv) == 0) {
-            const char *status = ((uint32_t)mv < threshold_mv) ? "*** LEAK ***" : "dry";
+            const char *status = (threshold_mv == 0) ? "(off)"
+                               : ((uint32_t)mv < threshold_mv) ? "*** LEAK ***" : "dry";
             app_printk("[LEAK] %d mV — %s\r\n", mv, status);
         } else {
             app_printk("[LEAK] read error\r\n");

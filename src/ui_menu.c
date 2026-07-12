@@ -109,7 +109,7 @@ void on_entry_PARAMS_MENU(void){
     app_printk("c) Max roll [s]: %u\r\n", p->max_roll_s);
     app_printk("d) Roll time [s]: %u\r\n", p->roll_time_s);
     app_printk("e) Desired heading [deg]: %d\r\n", p->desired_heading_deg);
-    app_printk("f) Leak threshold [mV]: %u\r\n", p->leak_threshold_mv);
+    app_printk("f) Leak threshold [mV, 0=off]: %u\r\n", p->leak_threshold_mv);
     app_printk("g) Console input [0=UART+WiFi 1=UART 2=WiFi]: %u (%s)\r\n",
                p->console_input_mode,
                console_input_mode_str((console_input_mode_t)p->console_input_mode));
@@ -440,7 +440,7 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
         if(line[0]=='c' || line[0]=='C'){ current_param_index = 12; app_printk("Enter Max roll [s]: "); return ST_PARAM_INPUT; }
         if(line[0]=='d' || line[0]=='D'){ current_param_index = 13; app_printk("Enter Roll time [s]: "); return ST_PARAM_INPUT; }
         if(line[0]=='e' || line[0]=='E'){ current_param_index = 14; app_printk("Enter Desired heading [deg]: "); return ST_PARAM_INPUT; }
-        if(line[0]=='f' || line[0]=='F'){ current_param_index = 15; app_printk("Enter Leak threshold [mV]: "); return ST_PARAM_INPUT; }
+        if(line[0]=='f' || line[0]=='F'){ current_param_index = 15; app_printk("Enter Leak threshold [mV, 0=off]: "); return ST_PARAM_INPUT; }
         if(line[0]=='g' || line[0]=='G'){
             current_param_index = 16;
             app_printk("Enter Console input mode [0=UART+WiFi 1=UART only 2=WiFi only]: ");

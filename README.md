@@ -156,7 +156,7 @@ until saved with `s`.
 | 7–a | Start/Surface/Dive/Climb pitch [s] | pitch-mass positions per phase |
 | b–d | Start/Max roll, Roll time [s] | roll-mass neutral/bank positions |
 | e | Desired heading [deg] | course to hold (0–359 true) |
-| f | Leak threshold [mV] | ADC below this = leak alarm |
+| f | Leak threshold [mV] | ADC below this = leak alarm; **0 = off** (default — a disconnected pin floats and would false-alarm) |
 | g | Console input mode | 0 = UART+WiFi, 1 = UART, 2 = WiFi |
 
 Positions are dead-reckoned "seconds of motor travel from zero" — there
