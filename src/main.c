@@ -282,6 +282,15 @@ static void wifi_ap_task(void *p1, void *p2, void *p3)
     netmask.s_addr = htonl(0xffffff00);
     net_if_ipv4_set_netmask(iface, &netmask);
     app_printk("WiFi: Netmask set to 255.255.255.0\r\n");
+
+    /* Start DHCP server so clients (laptop/phone) actually get an IP on join.
+       Without this, the client associates but never gets an address, telnet
+       fails, and the OS eventually drops the WiFi connection.
+       Pool starts at 192.168.4.2 (count = CONFIG_NET_DHCPV4_SERVER_ADDR_COUNT). */
+    struct in_addr dhcp_base;
+    dhcp_base.s_addr = htonl(0xc0a80402);  /* 192.168.4.2 */
+    int dret = net_dhcpv4_server_start(iface, &dhcp_base);
+    app_printk("WiFi: DHCP server start: %d\r\n", dret);
     
     /* Simple check: print interface name and L2 type */
     app_printk("WiFi: Interface name: %s\r\n", net_if_get_device(iface)->name);
