@@ -30,7 +30,7 @@
 };
 
 /* UART2: disabled — GPS is read over I2C (DDC) and the old console-mirror
-   code is gone, so GPIO16/17 are repurposed as the second I2C bus below. */
+   code is gone, so it is unused. */
 &uart2 {
 	status = "disabled";
 };
@@ -48,31 +48,37 @@
 	};
 };
 
-/* I2C1 on GPIO16(SDA)/GPIO17(SCL): water-temperature bus.
-   The TSYS01 (Blue Robotics Celsius) lives here because its address (0x77)
-   collides with the BMP180 on i2c0 — a second bus sidesteps the conflict.
-   GPIO16/17 are adjacent on the DevKitC header. Internal pull-ups are
-   enabled; add external 4.7k pull-ups to 3.3V for long/wet cable runs. */
-&pinctrl {
-	i2c1_sensors: i2c1_sensors {
-		group1 {
-			pinmux = <I2C1_SDA_GPIO16>,
-				 <I2C1_SCL_GPIO17>;
-			bias-pull-up;
-			drive-open-drain;
-			output-high;
-		};
-	};
+/* I2C1 (the SoC's second HARDWARE I2C controller): left disabled.
+   GPIO16/17 (its natural pins) are marked gpio-reserved-ranges in Zephyr's
+   own SoC devicetree for this board (alongside 6-11, 20, 24, 28-31) — the
+   selected SoC variant assumes a WROVER-E module with PSRAM wired to
+   those exact pins. Using them for anything else is a real resource
+   conflict, not a timing issue: the GPIO framework itself rejects them
+   ("Unsupported pin" assertion) the moment a driver tries to configure
+   GPIO16/17 as plain GPIOs. The water-temperature bus below uses
+   different, unreserved pins instead. */
+&i2c1 {
+	status = "disabled";
 };
 
-&i2c1 {
-	status = "okay";
-	clock-frequency = <100000>; /* 100kHz */
-	/* sda/scl-gpios are required by the ESP32 I2C driver for bus recovery */
-	sda-gpios = <&gpio0 16 GPIO_OPEN_DRAIN>;
-	scl-gpios = <&gpio0 17 GPIO_OPEN_DRAIN>;
-	pinctrl-0 = <&i2c1_sensors>;
-	pinctrl-names = "default";
+/* Water-temperature bus: software (bit-banged) I2C on GPIO4(SDA)/
+   GPIO13(SCL) — free, non-reserved, non-strapping pins — driven as plain
+   GPIOs by Zephyr's generic "gpio-i2c" driver rather than the SoC's
+   second hardware I2C peripheral (see note above for why i2c1/GPIO16-17
+   are off the table). The TSYS01 (Blue Robotics Celsius) lives on its own
+   bus because its address (0x77) collides with the BMP180 on i2c0.
+   Internal pull-ups are enabled; add external 4.7k pull-ups to 3.3V for
+   long/wet cable runs. */
+/ {
+	i2c_temp: i2c-gpio-temp {
+		compatible = "gpio-i2c";
+		status = "okay";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		clock-frequency = <100000>; /* 100kHz */
+		sda-gpios = <&gpio0 4 (GPIO_OPEN_DRAIN | GPIO_PULL_UP)>;
+		scl-gpios = <&gpio0 13 (GPIO_OPEN_DRAIN | GPIO_PULL_UP)>;
+	};
 };
 
 &gpio0 {

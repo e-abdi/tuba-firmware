@@ -7,7 +7,7 @@
  *
  * Bus topology (see the board overlay):
  *   i2c0 (GPIO21/22): MS5837, BMP180, HMC6343, u-blox GPS
- *   i2c1 (GPIO16/17): TSYS01 water temperature — on its own bus because
+ *   i2c_temp (GPIO4/13): TSYS01 water temperature — on its own bus because
  *                     its address (0x77) collides with the BMP180
  *
  * The report is intentionally the single place that understands this
@@ -28,14 +28,14 @@
 
 /* The two sensor buses. */
 static const struct device *const bus0 = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c0));
-static const struct device *const bus1 = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c1));
+static const struct device *const bus_temp = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c_temp));
 
 /* ---- Well-known addresses -------------------------------------------- */
 #define ADDR_HMC6343  0x19   /* tilt-compensated compass                  */
 #define ADDR_UBLOX    0x42   /* u-blox GPS via DDC (I2C)                  */
 #define ADDR_MS5837   0x76   /* external pressure/temperature (Bar30)    */
 #define ADDR_BMP180   0x77   /* internal (hull) pressure                  */
-#define ADDR_TSYS01   0x77   /* water temperature (Celsius), on i2c1      */
+#define ADDR_TSYS01   0x77   /* water temperature (Celsius), on i2c_temp      */
 
 /* ---- Low-level helpers ------------------------------------------------ */
 
@@ -129,21 +129,21 @@ static bool probe_bmp180(const char **detail)
     }
     if (!bmp180_at(bus0, ADDR_BMP180)) {
         /* Something else answers at 0x77 on i2c0 — likely a TSYS01 that
-         * was wired to the main bus instead of i2c1. */
+         * was wired to the main bus instead of i2c_temp. */
         *detail = " (0x77 on i2c0 occupied by another device)";
         return false;
     }
     return true;
 }
 
-/* TSYS01: expected on its own bus (i2c1), also detected on i2c0. */
+/* TSYS01: expected on its own bus (i2c_temp), also detected on i2c0. */
 static bool probe_tsys01(const char **detail)
 {
-    /* Preferred: dedicated bus i2c1 (GPIO16 SDA / GPIO17 SCL). */
-    if (bus_ok(bus1)) {
+    /* Preferred: dedicated bus i2c_temp (GPIO4 SDA / GPIO13 SCL). */
+    if (bus_ok(bus_temp)) {
         for (uint8_t addr = ADDR_TSYS01; addr >= 0x76; addr--) {
-            if (addr_acks(bus1, addr) && meas_prom_sane(bus1, addr)) {
-                *detail = " (on i2c1)";
+            if (addr_acks(bus_temp, addr) && meas_prom_sane(bus_temp, addr)) {
+                *detail = " (on i2c_temp)";
                 return true;
             }
         }
@@ -152,16 +152,16 @@ static bool probe_tsys01(const char **detail)
     /* Fallback: main bus, where 0x77 may be the BMP180. */
     if (bus_ok(bus0) && addr_acks(bus0, ADDR_TSYS01)) {
         if (bmp180_at(bus0, ADDR_TSYS01)) {
-            *detail = " (not on i2c1; i2c0 0x77 is the BMP180)";
+            *detail = " (not on i2c_temp; i2c0 0x77 is the BMP180)";
             return false;
         }
         if (meas_prom_sane(bus0, ADDR_TSYS01)) {
-            *detail = " (on i2c0 — consider moving to i2c1, GPIO16/17)";
+            *detail = " (on i2c0 — consider moving to i2c_temp, GPIO4/13)";
             return true;
         }
     }
 
-    *detail = " (wire to i2c1: SDA=GPIO16, SCL=GPIO17)";
+    *detail = " (wire to i2c_temp: SDA=GPIO4, SCL=GPIO13)";
     return false;
 }
 
@@ -178,7 +178,7 @@ struct sensor_entry {
 static const struct sensor_entry EXPECTED[] = {
     { "MS5837",  "external pressure/temp", "i2c0", ADDR_MS5837,  probe_ms5837  },
     { "BMP180",  "internal pressure",      "i2c0", ADDR_BMP180,  probe_bmp180  },
-    { "TSYS01",  "water temperature",      "i2c1", ADDR_TSYS01,  probe_tsys01  },
+    { "TSYS01",  "water temperature",      "i2c_temp", ADDR_TSYS01,  probe_tsys01  },
     { "HMC6343", "compass",                "i2c0", ADDR_HMC6343, probe_hmc6343 },
     { "u-blox",  "GPS (DDC)",              "i2c0", ADDR_UBLOX,   probe_ublox   },
 };
@@ -229,7 +229,7 @@ static void sweep_unexpected(const struct device *bus, const char *label)
 
 void sensors_report(void)
 {
-    if (!bus_ok(bus0) && !bus_ok(bus1)) {
+    if (!bus_ok(bus0) && !bus_ok(bus_temp)) {
         app_printk("[SENSORS] no I2C bus ready — cannot scan\r\n");
         return;
     }
@@ -238,11 +238,11 @@ void sensors_report(void)
     if (bus_ok(bus0)) {
         (void)i2c_configure(bus0, I2C_MODE_CONTROLLER | I2C_SPEED_SET(I2C_SPEED_STANDARD));
     }
-    if (bus_ok(bus1)) {
-        (void)i2c_configure(bus1, I2C_MODE_CONTROLLER | I2C_SPEED_SET(I2C_SPEED_STANDARD));
+    if (bus_ok(bus_temp)) {
+        (void)i2c_configure(bus_temp, I2C_MODE_CONTROLLER | I2C_SPEED_SET(I2C_SPEED_STANDARD));
     }
 
-    app_printk("\r\nI2C sensor check (i2c0 GPIO21/22, i2c1 GPIO16/17, 100 kHz):\r\n");
+    app_printk("\r\nI2C sensor check (i2c0 GPIO21/22, i2c_temp GPIO4/13, 100 kHz):\r\n");
 
     int missing = 0;
     for (size_t i = 0; i < ARRAY_SIZE(EXPECTED); i++) {
@@ -261,7 +261,7 @@ void sensors_report(void)
     /* Sweep both buses for surprises (mis-strapped address pins, unknown
      * boards left on a bus, ...). */
     sweep_unexpected(bus0, "i2c0");
-    sweep_unexpected(bus1, "i2c1");
+    sweep_unexpected(bus_temp, "i2c_temp");
 
     if (missing == 0) {
         app_printk("  All expected sensors present.\r\n");

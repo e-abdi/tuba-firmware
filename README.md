@@ -112,8 +112,8 @@ main menu header shows the current time and its source (`build` or `GPS`).
 | **Pitch limit UP** | GPIO32 | input-only, active-low (gpio1 pin 0) |
 | **Pitch limit DOWN** | GPIO33 | input-only, active-low (gpio1 pin 1) |
 | **Leak sensor** | GPIO34 | ADC1 CH6; below threshold = leak |
-| **I2C0 SDA/SCL** | GPIO21/22 | main sensor bus, 100 kHz |
-| **I2C1 SDA/SCL** | GPIO16/17 | water-temperature bus (TSYS01), 100 kHz |
+| **I2C0 SDA/SCL** | GPIO21/22 | main sensor bus (hardware I2C0), 100 kHz |
+| **i2c_temp SDA/SCL** | GPIO4/13 | water-temperature bus (TSYS01), software/bit-banged, 100 kHz |
 | **UART0 TX/RX** | GPIO1/3 | console, 9600 baud |
 
 ### I2C sensors
@@ -122,25 +122,29 @@ main menu header shows the current time and its source (`build` or `GPS`).
 |--------|-----|---------|------|
 | MS5837 (Bar30) | i2c0 | 0x76 | external water pressure + temp → depth |
 | BMP180 | i2c0 | 0x77 | internal hull pressure |
-| TSYS01 (Celsius) | **i2c1** | 0x77 | water temperature |
+| TSYS01 (Celsius) | **i2c_temp** | 0x77 | water temperature |
 | HMC6343 | i2c0 | 0x19 | tilt-compensated compass |
 | u-blox GPS (DDC) | i2c0 | 0x42 | position + UTC time |
 
 > **⚠ Why two buses**: the TSYS01 and BMP180 both answer at **0x77** and
-> cannot share a bus, so the TSYS01 gets the second I2C controller on
-> GPIO16 (SDA) / GPIO17 (SCL) — adjacent pins on the DevKitC header.
-> Internal pull-ups are enabled; add external 4.7 kΩ pull-ups to 3.3 V for
-> long cable runs. The firmware also finds a TSYS01 wired to i2c0 (it
-> tells it apart from the BMP180 by chip-id) and suggests moving it.
+> cannot share a bus, so the TSYS01 gets its own bus on GPIO4 (SDA) /
+> GPIO13 (SCL). This is a **software (bit-banged) I2C bus**, not the SoC's
+> second hardware I2C controller — that hardware peripheral's natural pins
+> (GPIO16/17) are reserved elsewhere in this board's devicetree for a
+> PSRAM chip that this module doesn't have, and using them causes a boot
+> failure. GPIO4/13 are free, unreserved pins. Internal pull-ups are
+> enabled; add external 4.7 kΩ pull-ups to 3.3 V for long cable runs. The
+> firmware also finds a TSYS01 wired to i2c0 (it tells it apart from the
+> BMP180 by chip-id) and suggests moving it.
 
 At boot (and from *hardware test → sensors → scan*), every expected sensor
 is probed individually on its bus:
 
 ```
-I2C sensor check (i2c0 GPIO21/22, i2c1 GPIO16/17, 100 kHz):
+I2C sensor check (i2c0 GPIO21/22, i2c_temp GPIO4/13, 100 kHz):
   [ OK ]  MS5837   external pressure/temp   i2c0 @ 0x76
   [ OK ]  BMP180   internal pressure        i2c0 @ 0x77
-  [ OK ]  TSYS01   water temperature        i2c1 @ 0x77 (on i2c1)
+  [ OK ]  TSYS01   water temperature        i2c_temp @ 0x77 (on i2c_temp)
   [ OK ]  HMC6343  compass                  i2c0 @ 0x19
   [MISS]  u-blox   GPS (DDC)                i2c0 @ 0x42
 ```

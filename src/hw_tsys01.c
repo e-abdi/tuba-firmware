@@ -16,9 +16,15 @@
  *
  * Bus placement: the Celsius ships at address 0x77 — the same as the
  * BMP180 on the main sensor bus. To sidestep that conflict the TSYS01 has
- * its own bus: i2c1 on GPIO16 (SDA) / GPIO17 (SCL). The driver probes
- * i2c1 first and falls back to i2c0 (where a BMP180 at 0x77 is detected
- * via its chip-id register and skipped), so either wiring works.
+ * its own bus: a bit-banged software I2C ("i2c_temp") on GPIO4 (SDA) /
+ * GPIO13 (SCL). It's software rather than the SoC's second hardware I2C
+ * controller because enabling that hardware peripheral caused an
+ * intermittent cold-boot freeze (see the board overlay for details) —
+ * the bit-banged driver only toggles plain GPIOs, sidestepping whatever
+ * in the hardware controller's init path was responsible. The driver
+ * probes i2c_temp first and falls back to i2c0 (where a BMP180 at 0x77
+ * is detected via its chip-id register and skipped), so either wiring
+ * works.
  */
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -31,13 +37,13 @@
 #include "app_print.h"
 #include "net_console.h"
 
-/* Candidate buses, in probe order: the dedicated temperature bus first,
- * then the shared sensor bus as a fallback. */
+/* Candidate buses, in probe order: the dedicated (bit-banged) temperature
+ * bus first, then the shared sensor bus as a fallback. */
 static const struct device *const i2c_buses[] = {
-    DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c1)),   /* GPIO16/17 — preferred */
-    DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c0)),   /* GPIO21/22 — fallback  */
+    DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c_temp)),  /* GPIO4/13 — preferred */
+    DEVICE_DT_GET_OR_NULL(DT_NODELABEL(i2c0)),      /* GPIO21/22 — fallback  */
 };
-static const char *const i2c_bus_names[] = { "i2c1", "i2c0" };
+static const char *const i2c_bus_names[] = { "i2c_temp", "i2c0" };
 
 /* Bus the sensor was actually found on (set by tsys01_init). */
 static const struct device *i2c_dev;
@@ -135,7 +141,7 @@ int tsys01_init(void)
         return 0;
     }
 
-    /* Try each candidate bus (i2c1 first) and each address (0x77 first). */
+    /* Try each candidate bus (i2c_temp first) and each address (0x77 first). */
     static const uint8_t candidates[] = { 0x77, 0x76 };
     for (size_t b = 0; b < ARRAY_SIZE(i2c_buses); b++) {
         const struct device *bus = i2c_buses[b];
@@ -222,7 +228,7 @@ int tsys01_selftest(void)
 {
     app_printk("\r\n[TSYS01] --- self-test ---\r\n");
 
-    /* 1. At least one candidate bus must be up (i2c1 preferred, i2c0 ok). */
+    /* 1. At least one candidate bus must be up (i2c_temp preferred, i2c0 ok). */
     int buses_ready = 0;
     for (size_t b = 0; b < ARRAY_SIZE(i2c_buses); b++) {
         if (i2c_buses[b] != NULL && device_is_ready(i2c_buses[b])) {
@@ -230,7 +236,7 @@ int tsys01_selftest(void)
         }
     }
     if (buses_ready == 0) {
-        app_printk("[TSYS01] FAIL: no I2C bus ready (i2c1/i2c0)\r\n");
+        app_printk("[TSYS01] FAIL: no I2C bus ready (i2c_temp/i2c0)\r\n");
         return -ENODEV;
     }
     app_printk("[TSYS01] 1. I2C buses ready ........... OK (%d of 2)\r\n", buses_ready);
@@ -239,8 +245,8 @@ int tsys01_selftest(void)
      *    is picked up without a reboot). */
     g_state = TSYS01_UNKNOWN;
     if (tsys01_init() != 0) {
-        app_printk("[TSYS01] 2. probe 0x77/0x76 .......... FAIL (not found on i2c1 or i2c0)\r\n");
-        app_printk("[TSYS01]    expected wiring: SDA=GPIO16, SCL=GPIO17 (i2c1)\r\n");
+        app_printk("[TSYS01] 2. probe 0x77/0x76 .......... FAIL (not found on i2c_temp or i2c0)\r\n");
+        app_printk("[TSYS01]    expected wiring: SDA=GPIO4, SCL=GPIO13 (i2c_temp)\r\n");
         app_printk("[TSYS01] FAIL: sensor not detected\r\n");
         return -ENODEV;
     }

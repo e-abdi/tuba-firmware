@@ -1,10 +1,10 @@
 /*
  * hw_tsys01.h — TSYS01 water-temperature sensor (Blue Robotics "Celsius")
  *
- * Fast-response ±0.1 °C digital thermometer. Lives on its own bus — i2c1,
- * SDA=GPIO16 / SCL=GPIO17 — because its address (0x77, with 0x76 as the
+ * Fast-response ±0.1 °C digital thermometer. Lives on its own bus — i2c_temp,
+ * SDA=GPIO4 / SCL=GPIO13 — because its address (0x77, with 0x76 as the
  * CSB-strapped alternative) collides with the BMP180 on the main sensor
- * bus (i2c0). The driver probes i2c1 first and falls back to i2c0, where
+ * bus (i2c0). The driver probes i2c_temp first and falls back to i2c0, where
  * a BMP180 answering at 0x77 is recognized by chip-id and skipped.
  */
 #ifndef HW_TSYS01_H
