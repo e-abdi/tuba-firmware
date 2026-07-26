@@ -20,13 +20,16 @@ PARAM_INPUT --> PARAMS_MENU: value entered / [accepted or rejected]
 
 HWTEST_MENU --> PR_MENU: "1" / pitch & roll
 HWTEST_MENU --> PUMP_INPUT: "2" / pump test
-HWTEST_MENU --> HWTEST_MENU: "3" positions\n"4" internal pressure\n"5" external pressure\n"6" GPS\n"8" leak sensor
+HWTEST_MENU --> HWTEST_MENU: "3" positions\n"4" internal pressure\n"5" external pressure\n"6" GPS\n"8" leak sensor\n"a" I2C scan report
 HWTEST_MENU --> COMPASS_MENU: "7" / compass
 HWTEST_MENU --> SENSORS_MENU: "9" / sensors
 HWTEST_MENU --> MENU: "x" / back
 
-SENSORS_MENU --> SENSORS_MENU: "1" temperature self-test\n"2" temperature stream\n"3" I2C scan report
+SENSORS_MENU --> TEMP_MENU: "1" / temperature
 SENSORS_MENU --> HWTEST_MENU: "x" / back
+
+TEMP_MENU --> TEMP_MENU: "1" self-test\n"2" stream
+TEMP_MENU --> SENSORS_MENU: "x" / back
 
 PR_MENU --> PR_INPUT: "1" roll motor\n"2" pitch motor
 PR_MENU --> PR_MENU: "3" / limit switch test
@@ -86,8 +89,12 @@ note right of SENSORS_MENU
       self-test (probe, PROM,
       sample plausibility)
     - live temperature stream
-    - expected-sensor I2C scan
-      (connected vs missing)
+end note
+
+note right of HWTEST_MENU
+    "a" I2C scan report:
+    expected-sensor I2C scan
+    (connected vs missing)
 end note
 
 note right of DEPLOYED

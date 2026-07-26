@@ -25,6 +25,7 @@ typedef enum {
     ST_MENU,              /* top-level menu */
     ST_HWTEST_MENU,       /* hardware test menu */
     ST_SENSORS_MENU,      /* sensor tests (temperature, I2C scan, ...) */
+    ST_TEMP_MENU,         /* temperature (TSYS01) self-test/stream menu */
     ST_PARAMS_MENU,       /* mission parameter list */
     ST_PARAM_INPUT,       /* waiting for a new value for one parameter */
     ST_PR_MENU,           /* pitch & roll motor test menu */

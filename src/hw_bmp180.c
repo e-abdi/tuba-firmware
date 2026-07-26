@@ -149,9 +149,16 @@ int bmp180_init(void)
     }
     /* Ensure bus speed is at 100 kHz for BMP180 */
     (void)i2c_configure(i2c0_dev, I2C_MODE_CONTROLLER | I2C_SPEED_SET(I2C_SPEED_STANDARD));
-    /* Probe sensor by reading CHIPID (should be 0x55) */
+    /* Probe sensor by reading CHIPID (should be 0x55). One retry after a
+     * short pause absorbs the occasional transient I2C glitch instead of
+     * reporting the sensor missing on a single bad read. */
     uint8_t id = 0;
-    if (i2c_reg_read_u8(i2c0_dev, BMP180_ADDR, REG_CHIPID, &id) || id != 0x55) {
+    int ret = i2c_reg_read_u8(i2c0_dev, BMP180_ADDR, REG_CHIPID, &id);
+    if (ret != 0 || id != 0x55) {
+        k_msleep(5);
+        ret = i2c_reg_read_u8(i2c0_dev, BMP180_ADDR, REG_CHIPID, &id);
+    }
+    if (ret != 0 || id != 0x55) {
         app_printk("[Internal Pressure] BMP180 not found (id=0x%02x)\r\n", id);
         return -ENODEV;
     }

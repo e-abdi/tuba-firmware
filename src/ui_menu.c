@@ -21,10 +21,11 @@
  *   │   ├── 6 GPS
  *   │   ├── 7 compass (HMC6343)
  *   │   ├── 8 leak sensor
- *   │   └── 9 SENSORS
- *   │       ├── 1 temperature self-test (TSYS01)
- *   │       ├── 2 temperature stream
- *   │       └── 3 I2C sensor scan report
+ *   │   ├── 9 SENSORS
+ *   │   │   └── 1 TEMPERATURE (TSYS01)
+ *   │   │       ├── 1 self-test
+ *   │   │       └── 2 stream
+ *   │   └── a I2C sensor scan report
  *   ├── 3 SIMULATE ── mission with simulated depth
  *   ├── 4 DEPLOY   ── real mission
  *   └── 5 OTA firmware update
@@ -130,17 +131,24 @@ void on_entry_HWTEST_MENU(void){
     app_printk("7) Compass\r\n");
     app_printk("8) Leak sensor\r\n");
     app_printk("9) Sensors\r\n");
+    app_printk("a) I2C sensor scan report\r\n");
     app_printk("x) back\r\n");
-    app_printk("Select [1-9,x]: ");
+    app_printk("Select [1-9,a,x]: ");
 }
 
 void on_entry_SENSORS_MENU(void){
     app_printk("\r\n-- SENSORS --\r\n");
-    app_printk("1) Temperature (TSYS01) self-test\r\n");
-    app_printk("2) Temperature stream\r\n");
-    app_printk("3) I2C sensor scan report\r\n");
+    app_printk("1) Temperature (TSYS01)\r\n");
     app_printk("x) back\r\n");
-    app_printk("Select [1-3,x]: ");
+    app_printk("Select [1,x]: ");
+}
+
+void on_entry_TEMP_MENU(void){
+    app_printk("\r\n-- TEMPERATURE (TSYS01) --\r\n");
+    app_printk("1) self-test\r\n");
+    app_printk("2) stream\r\n");
+    app_printk("x) back\r\n");
+    app_printk("Select [1-2,x]: ");
 }
 
 void on_entry_COMPASS_MENU(void){
@@ -217,6 +225,7 @@ state_id_t on_event_POWERUP_WAIT(const event_t *e){
 state_id_t on_event_MENU(const event_t *e){ ARG_UNUSED(e); return ST_MENU; }
 state_id_t on_event_HWTEST_MENU(const event_t *e){ ARG_UNUSED(e); return ST_HWTEST_MENU; }
 state_id_t on_event_SENSORS_MENU(const event_t *e){ ARG_UNUSED(e); return ST_SENSORS_MENU; }
+state_id_t on_event_TEMP_MENU(const event_t *e){ ARG_UNUSED(e); return ST_TEMP_MENU; }
 state_id_t on_event_PARAMS_MENU(const event_t *e){ ARG_UNUSED(e); return ST_PARAMS_MENU; }
 state_id_t on_event_PARAM_INPUT(const event_t *e){ ARG_UNUSED(e); return ST_PARAM_INPUT; }
 state_id_t on_event_PR_MENU(const event_t *e){ ARG_UNUSED(e); return ST_PR_MENU; }
@@ -336,6 +345,11 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
             return ST_HWTEST_MENU;
         }
         if(line[0]=='9') { return ST_SENSORS_MENU; }
+        if(line[0]=='a' || line[0]=='A') {
+            sensors_report();
+            on_entry_HWTEST_MENU();
+            return ST_HWTEST_MENU;
+        }
         if(line[0]=='x' || line[0]=='X') { return ST_MENU; }
         app_printk("Invalid.\r\n");
         return ST_HWTEST_MENU;
@@ -343,24 +357,27 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
 
     /* ---- Sensors submenu ---- */
     if (state==ST_SENSORS_MENU){
-        if(line[0]=='1') {
-            (void)tsys01_selftest();
-            on_entry_SENSORS_MENU();
-            return ST_SENSORS_MENU;
-        }
-        if(line[0]=='2') {
-            tsys01_stream_interactive();
-            on_entry_SENSORS_MENU();
-            return ST_SENSORS_MENU;
-        }
-        if(line[0]=='3') {
-            sensors_report();
-            on_entry_SENSORS_MENU();
-            return ST_SENSORS_MENU;
-        }
+        if(line[0]=='1') { return ST_TEMP_MENU; }
         if(line[0]=='x' || line[0]=='X') { return ST_HWTEST_MENU; }
         app_printk("Invalid.\r\n");
         return ST_SENSORS_MENU;
+    }
+
+    /* ---- Temperature (TSYS01) submenu ---- */
+    if (state==ST_TEMP_MENU){
+        if(line[0]=='1') {
+            (void)tsys01_selftest();
+            on_entry_TEMP_MENU();
+            return ST_TEMP_MENU;
+        }
+        if(line[0]=='2') {
+            tsys01_stream_interactive();
+            on_entry_TEMP_MENU();
+            return ST_TEMP_MENU;
+        }
+        if(line[0]=='x' || line[0]=='X') { return ST_SENSORS_MENU; }
+        app_printk("Invalid.\r\n");
+        return ST_TEMP_MENU;
     }
 
     /* ---- Pitch & roll test menu ---- */

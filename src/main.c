@@ -428,6 +428,7 @@ static const state_ops_t STATE_TABLE[ST__COUNT] = {
     [ST_MENU]         = { "MENU",         on_entry_MENU,         NULL, on_event_MENU         },
     [ST_HWTEST_MENU]  = { "HWTEST_MENU",  on_entry_HWTEST_MENU,  NULL, on_event_HWTEST_MENU  },
     [ST_SENSORS_MENU] = { "SENSORS_MENU", on_entry_SENSORS_MENU, NULL, on_event_SENSORS_MENU },
+    [ST_TEMP_MENU]    = { "TEMP_MENU",    on_entry_TEMP_MENU,    NULL, on_event_TEMP_MENU    },
     [ST_PARAMS_MENU]  = { "PARAMS_MENU",  on_entry_PARAMS_MENU,  NULL, on_event_PARAMS_MENU  },
     [ST_PARAM_INPUT]  = { "PARAM_INPUT",  NULL /* prompt printed by PARAMS_MENU handler */,
                           NULL, on_event_PARAM_INPUT },

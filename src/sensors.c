@@ -44,11 +44,28 @@ static bool bus_ok(const struct device *bus)
     return bus != NULL && device_is_ready(bus);
 }
 
+/* i2c_write_read() with one retry after a short pause. The very first I2C
+ * transaction issued after boot on this board is prone to a single failure
+ * (bus/controller still settling) even with proper pull-ups in place;
+ * every probe below funnels through here so none of them are penalized
+ * just for being the one that goes first. */
+static int i2c_write_read_retry(const struct device *bus, uint8_t addr,
+                                 const void *wbuf, size_t wlen,
+                                 void *rbuf, size_t rlen)
+{
+    int rc = i2c_write_read(bus, addr, wbuf, wlen, rbuf, rlen);
+    if (rc != 0) {
+        k_msleep(2);
+        rc = i2c_write_read(bus, addr, wbuf, wlen, rbuf, rlen);
+    }
+    return rc;
+}
+
 /* Generic "does anything ACK at this address" probe. */
 static bool addr_acks(const struct device *bus, uint8_t addr)
 {
     uint8_t byte = 0;
-    return i2c_write_read(bus, addr, NULL, 0, &byte, 1) == 0;
+    return i2c_write_read_retry(bus, addr, NULL, 0, &byte, 1) == 0;
 }
 
 /* Read one big-endian PROM word using the MEAS command scheme shared by
@@ -57,7 +74,7 @@ static int meas_prom_word(const struct device *bus, uint8_t addr, int idx, uint1
 {
     uint8_t cmd = 0xA0 + (uint8_t)(idx * 2);
     uint8_t buf[2];
-    int rc = i2c_write_read(bus, addr, &cmd, 1, buf, sizeof(buf));
+    int rc = i2c_write_read_retry(bus, addr, &cmd, 1, buf, sizeof(buf));
     if (rc == 0) {
         *out = ((uint16_t)buf[0] << 8) | buf[1];
     }
@@ -84,7 +101,7 @@ static bool meas_prom_sane(const struct device *bus, uint8_t addr)
 static bool bmp180_at(const struct device *bus, uint8_t addr)
 {
     uint8_t reg = 0xD0, id = 0;
-    return i2c_write_read(bus, addr, &reg, 1, &id, 1) == 0 && id == 0x55;
+    return i2c_write_read_retry(bus, addr, &reg, 1, &id, 1) == 0 && id == 0x55;
 }
 
 /* ---- Per-sensor probes ------------------------------------------------ */
@@ -105,17 +122,22 @@ static bool probe_ublox(const char **detail)
     }
     /* Read the "bytes available" register pair the driver uses (0xFD). */
     uint8_t reg = 0xFD, val = 0;
-    return i2c_write_read(bus0, ADDR_UBLOX, &reg, 1, &val, 1) == 0;
+    return i2c_write_read_retry(bus0, ADDR_UBLOX, &reg, 1, &val, 1) == 0;
 }
 
 static bool probe_ms5837(const char **detail)
 {
     *detail = "";
-    if (!bus_ok(bus0) || !addr_acks(bus0, ADDR_MS5837)) {
+    if (!bus_ok(bus0)) {
         return false;
     }
+    /* Same reasoning as probe_bmp180(): skip the addr_acks() zero-length-
+     * write pre-check and go straight to the real, register-based probe.
+     * meas_prom_sane() already confirms both presence and sane data in one
+     * shot, and unlike addr_acks() it uses the write-reg-then-read shape
+     * the real driver uses, which this part answers reliably. */
     if (!meas_prom_sane(bus0, ADDR_MS5837)) {
-        *detail = " (ACKs but PROM unreadable)";
+        *detail = " (no response / PROM unreadable)";
         return false;
     }
     return true;
@@ -124,16 +146,36 @@ static bool probe_ms5837(const char **detail)
 static bool probe_bmp180(const char **detail)
 {
     *detail = "";
-    if (!bus_ok(bus0) || !addr_acks(bus0, ADDR_BMP180)) {
+    if (!bus_ok(bus0)) {
         return false;
     }
+    /* Go straight to the chip-id read; don't gate on addr_acks() first —
+     * its zero-length-write probe shape (write-address-ACK, no data,
+     * repeated start) isn't one the BMP180 answers reliably, even though
+     * it answers a normal register read (write reg, restart, read) every
+     * time. Gating on it made the scan report the BMP180 missing even
+     * when it was present and working. */
     if (!bmp180_at(bus0, ADDR_BMP180)) {
         /* Something else answers at 0x77 on i2c0 — likely a TSYS01 that
          * was wired to the main bus instead of i2c_temp. */
-        *detail = " (0x77 on i2c0 occupied by another device)";
+        *detail = " (0x77 on i2c0 occupied by another device, or not present)";
         return false;
     }
     return true;
+}
+
+/* TSYS01 presence at one bus+address, probed the same way the driver does:
+ * soft reset (also loads the PROM after power-up), then PROM sanity. A bare
+ * address-ACK probe is not enough here — the TSYS01 NAKs an empty read, so
+ * addr_acks() reports it missing even when it is wired and working. */
+static bool tsys01_present_at(const struct device *bus, uint8_t addr)
+{
+    uint8_t cmd = 0x1E;   /* TSYS01 soft reset */
+    if (i2c_write(bus, &cmd, 1, addr) != 0) {
+        return false;     /* no ACK — nothing at this address */
+    }
+    k_msleep(10);         /* reset recovery */
+    return meas_prom_sane(bus, addr);
 }
 
 /* TSYS01: expected on its own bus (i2c_temp), also detected on i2c0. */
@@ -142,20 +184,22 @@ static bool probe_tsys01(const char **detail)
     /* Preferred: dedicated bus i2c_temp (GPIO4 SDA / GPIO13 SCL). */
     if (bus_ok(bus_temp)) {
         for (uint8_t addr = ADDR_TSYS01; addr >= 0x76; addr--) {
-            if (addr_acks(bus_temp, addr) && meas_prom_sane(bus_temp, addr)) {
+            if (tsys01_present_at(bus_temp, addr)) {
                 *detail = " (on i2c_temp)";
                 return true;
             }
         }
     }
 
-    /* Fallback: main bus, where 0x77 may be the BMP180. */
-    if (bus_ok(bus0) && addr_acks(bus0, ADDR_TSYS01)) {
+    /* Fallback: main bus, where 0x77 may be the BMP180. (Only 0x77 is
+     * checked here — a reset+PROM probe at 0x76 would false-positive on
+     * the MS5837, which shares the MEAS command scheme.) */
+    if (bus_ok(bus0)) {
         if (bmp180_at(bus0, ADDR_TSYS01)) {
             *detail = " (not on i2c_temp; i2c0 0x77 is the BMP180)";
             return false;
         }
-        if (meas_prom_sane(bus0, ADDR_TSYS01)) {
+        if (tsys01_present_at(bus0, ADDR_TSYS01)) {
             *detail = " (on i2c0 — consider moving to i2c_temp, GPIO4/13)";
             return true;
         }

@@ -60,6 +60,15 @@ static uint8_t ms_crc4(uint16_t prom[8])
     return (uint8_t)(n_rem ^ 0x00);
 }
 
+/* 0x77 is also the BMP180's (internal pressure) fixed address on i2c0.
+ * Recognize it by chip-id so that a wired BMP180 isn't mistaken for an
+ * MS5837 when the 0x76 probe fails and we fall back to 0x77. */
+static bool addr_is_bmp180(uint8_t addr)
+{
+    uint8_t reg = 0xD0, id = 0;
+    return i2c_write_read(i2c_dev, addr, &reg, 1, &id, 1) == 0 && id == 0x55;
+}
+
 /* Reset I2C bus state after failed operation */
 static void ms5837_bus_recover(void)
 {
@@ -162,8 +171,14 @@ static int ms5837_probe(void)
         (void)i2c_configure(i2c_dev, I2C_MODE_CONTROLLER | I2C_SPEED_SET(I2C_SPEED_STANDARD));
         k_msleep(5);
         
+        if (try_addr == 0x77 && addr_is_bmp180(try_addr)) {
+            app_printk("[External Pressure] 0x77 answers as the BMP180 (internal "
+                       "pressure) — skipping, not an MS5837\r\n");
+            continue;
+        }
+
         app_printk("[External Pressure] Probing address 0x%02x...\r\n", try_addr);
-        
+
         /* Probe: try to read one PROM word (0xA0) with retries */
         int retries = 2;
         int rc = -1;

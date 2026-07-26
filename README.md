@@ -60,10 +60,11 @@ MENU
 │   ├── 6 GPS               wait for fix, print position
 │   ├── 7 compass           HMC6343 calibrate / stream
 │   ├── 8 leak sensor       ADC stream vs threshold
-│   └── 9 sensors
-│       ├── 1 temperature self-test   TSYS01 probe/PROM/sample checks
-│       ├── 2 temperature stream      live water temperature
-│       └── 3 I2C sensor scan report  expected vs connected
+│   ├── 9 sensors
+│   │   └── 1 temperature (TSYS01)
+│   │       ├── 1 self-test  probe/PROM/sample checks
+│   │       └── 2 stream     live water temperature
+│   └── a I2C sensor scan report  expected vs connected
 ├── 3 simulate          mission with synthetic depth (bench testing)
 ├── 4 deploy            real mission (requires external pressure sensor)
 └── 5 OTA firmware update
@@ -112,7 +113,7 @@ main menu header shows the current time and its source (`build` or `GPS`).
 | **Pitch limit UP** | GPIO32 | input-only, active-low (gpio1 pin 0) |
 | **Pitch limit DOWN** | GPIO33 | input-only, active-low (gpio1 pin 1) |
 | **Leak sensor** | GPIO34 | ADC1 CH6; below threshold = leak |
-| **I2C0 SDA/SCL** | GPIO21/22 | main sensor bus (hardware I2C0), 100 kHz |
+| **I2C0 SDA/SCL** | GPIO21/22 | main sensor bus (hardware I2C0), 100 kHz; external 4.7 kΩ pull-ups to 3.3 V required — the SoC's internal pull-ups alone are too weak once more than one sensor loads the bus |
 | **i2c_temp SDA/SCL** | GPIO4/13 | water-temperature bus (TSYS01), software/bit-banged, 100 kHz |
 | **UART0 TX/RX** | GPIO1/3 | console, 9600 baud |
 
@@ -137,8 +138,8 @@ main menu header shows the current time and its source (`build` or `GPS`).
 > firmware also finds a TSYS01 wired to i2c0 (it tells it apart from the
 > BMP180 by chip-id) and suggests moving it.
 
-At boot (and from *hardware test → sensors → scan*), every expected sensor
-is probed individually on its bus:
+At boot (and from *hardware test → I2C sensor scan report*), every expected
+sensor is probed individually on its bus:
 
 ```
 I2C sensor check (i2c0 GPIO21/22, i2c_temp GPIO4/13, 100 kHz):
