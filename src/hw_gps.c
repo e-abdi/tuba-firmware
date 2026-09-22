@@ -247,11 +247,12 @@ void gps_fix_interactive(void)
     }
 }
 
-/* Non-interactive GPS fix for deploy/simulate: 
+/* Non-interactive GPS fix for deploy/simulate:
  * Blocks for up to timeout_sec seconds waiting for a valid fix.
- * Returns true if fix acquired, false on timeout.
+ * Returns true if fix acquired, false on timeout. On success the position
+ * is stored in *out_lat / *out_lon (decimal degrees) when those are given.
  */
-bool gps_fix_wait(int timeout_sec)
+bool gps_fix_wait_pos(int timeout_sec, double *out_lat, double *out_lon)
 {
     if (i2c_dev == NULL || !device_is_ready(i2c_dev)) {
         k_sleep(K_MSEC(200));
@@ -299,6 +300,8 @@ bool gps_fix_wait(int timeout_sec)
                                 lat >= -90.0 && lat <= 90.0 &&
                                 lon >= -180.0 && lon <= 180.0) {
                                 app_printk(" acquired (%.6f, %.6f)\r\n", lat, lon);
+                                if (out_lat) { *out_lat = lat; }
+                                if (out_lon) { *out_lon = lon; }
                                 return true;  /* Fix acquired */
                             }
                         }
@@ -324,3 +327,8 @@ bool gps_fix_wait(int timeout_sec)
     }
 }
 
+/* Position-less convenience wrapper (unchanged behavior for old callers). */
+bool gps_fix_wait(int timeout_sec)
+{
+    return gps_fix_wait_pos(timeout_sec, NULL, NULL);
+}

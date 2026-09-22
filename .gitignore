@@ -28,3 +28,9 @@ __pycache__/
 
 # Log files
 *.log
+
+# Console captures from tools/tuba_console.py
+captures/
+
+# Reference docs (separate repo, not part of firmware)
+Glider-Operation-Best-Practices/

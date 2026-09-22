@@ -114,10 +114,18 @@ void on_entry_PARAMS_MENU(void){
     app_printk("g) Console input [0=UART+WiFi 1=UART 2=WiFi]: %u (%s)\r\n",
                p->console_input_mode,
                console_input_mode_str((console_input_mode_t)p->console_input_mode));
+    app_printk("-- safety envelope (abort -> recovery position) --\r\n");
+    app_printk("h) T_MISSION [min, 0=off]: %u   (climb by %u min or abort)\r\n",
+               p->t_mission_min, (unsigned)(p->t_mission_min / 2));
+    app_printk("i) Depth limit [m, 0=off]: %u\r\n", p->max_depth_m);
+    app_printk("j) Sensor read retries: %u\r\n", p->sensor_retries);
+    app_printk("k) Pump full stroke [s]: %u\r\n", p->pump_full_stroke_s);
+    app_printk("l) Pitch full stroke [s]: %u\r\n", p->pitch_full_stroke_s);
+    app_printk("m) Recovery report interval [min]: %u\r\n", p->t_rsleep_min);
     app_printk("s) Save parameters\r\n");
     app_printk("r) Reset defaults\r\n");
     app_printk("x) Back\r\n");
-    app_printk("Select [1-9,a-g,s,r,x]: ");
+    app_printk("Select [1-9,a-m,s,r,x]: ");
 }
 
 void on_entry_HWTEST_MENU(void){
@@ -175,8 +183,16 @@ void on_entry_PR_MENU(void){
 }
 
 void on_entry_RECOVERY(void){
+    const char *why = deploy_abort_reason();
     app_printk("\r\n-- RECOVERY state --\r\n");
-    app_printk("Type 'resume' to go to DEPLOYED.\r\n");
+    if (why) {
+        app_printk("The last dive was aborted: %s\r\n", why);
+        app_printk("The glider is parked in the recovery position "
+                   "(pump fully out, pitch fully forward).\r\n");
+        app_printk("Fix the cause before resuming — check the $ERRORS line "
+                   "in the dive log.\r\n");
+    }
+    app_printk("Type 'resume' to go to DEPLOYED, or 'menu' for the main menu.\r\n");
 }
 
 void on_entry_DEPLOYED(void){
@@ -242,9 +258,11 @@ state_id_t on_event_DEPLOYED(const event_t *e){
     if (e->id == EVT_ENTER) {
         deploy_notify_enter();
     }
-    /* The mission runs in a worker thread; when it exits, go back to MENU. */
+    /* The mission runs in a worker thread; when it exits, go back to MENU —
+     * unless a safety guard tripped, in which case the glider is parked in
+     * the recovery position and the operator must decide what happens next. */
     if (!deploy_is_running()) {
-        return ST_MENU;
+        return deploy_aborted() ? ST_RECOVERY : ST_MENU;
     }
     return ST_DEPLOYED;
 }
@@ -254,7 +272,7 @@ state_id_t on_event_SIMULATE(const event_t *e){
         deploy_notify_enter();
     }
     if (!simulate_is_running()) {
-        return ST_MENU;
+        return deploy_aborted() ? ST_RECOVERY : ST_MENU;
     }
     return ST_SIMULATE;
 }
@@ -284,10 +302,10 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
     /* If a mission/simulation worker finished while we were typing, fall
      * back to the menu before interpreting the input. */
     if (state == ST_DEPLOYED && !deploy_is_running()) {
-        return ST_MENU;
+        return deploy_aborted() ? ST_RECOVERY : ST_MENU;
     }
     if (state == ST_SIMULATE && !simulate_is_running()) {
-        return ST_MENU;
+        return deploy_aborted() ? ST_RECOVERY : ST_MENU;
     }
 
     /* ---- Top-level menu ---- */
@@ -470,6 +488,12 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
             app_printk("Enter Console input mode [0=UART+WiFi 1=UART only 2=WiFi only]: ");
             return ST_PARAM_INPUT;
         }
+        if(line[0]=='h' || line[0]=='H'){ current_param_index = 17; app_printk("Enter T_MISSION [min, 0=off]: "); return ST_PARAM_INPUT; }
+        if(line[0]=='i' || line[0]=='I'){ current_param_index = 18; app_printk("Enter Depth limit [m, 0=off]: "); return ST_PARAM_INPUT; }
+        if(line[0]=='j' || line[0]=='J'){ current_param_index = 19; app_printk("Enter Sensor read retries: "); return ST_PARAM_INPUT; }
+        if(line[0]=='k' || line[0]=='K'){ current_param_index = 20; app_printk("Enter Pump full stroke [s]: "); return ST_PARAM_INPUT; }
+        if(line[0]=='l' || line[0]=='L'){ current_param_index = 21; app_printk("Enter Pitch full stroke [s]: "); return ST_PARAM_INPUT; }
+        if(line[0]=='m' || line[0]=='M'){ current_param_index = 22; app_printk("Enter Recovery report interval [min]: "); return ST_PARAM_INPUT; }
         app_printk("Invalid.\r\n");
         return ST_PARAMS_MENU;
     }
@@ -512,6 +536,22 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
             app_printk("Console input now: %s\r\n",
                        console_input_mode_str((console_input_mode_t)val));
             break;
+        case 17: p->t_mission_min = (uint16_t)val; break;
+        case 18: p->max_depth_m = (uint16_t)val; break;
+        case 19:
+            /* A zero budget would mean "never read a sensor"; deploy.c
+             * clamps it to one attempt, so say so here rather than let
+             * the displayed value lie. */
+            if (val < 1) {
+                app_printk("Retries must be at least 1.\r\n");
+                on_entry_PARAMS_MENU();
+                return ST_PARAMS_MENU;
+            }
+            p->sensor_retries = (uint16_t)val;
+            break;
+        case 20: p->pump_full_stroke_s = (uint16_t)val; break;
+        case 21: p->pitch_full_stroke_s = (uint16_t)val; break;
+        case 22: p->t_rsleep_min = (uint16_t)val; break;
         default: break;
         }
         app_printk("Value updated (not yet saved).\r\n");
@@ -522,7 +562,8 @@ state_id_t ui_handle_line(state_id_t state, const char *line){
     /* ---- Recovery hold state ---- */
     if (state==ST_RECOVERY){
         if(strcmp(line,"resume")==0){ return ST_DEPLOYED; }
-        app_printk("Unknown.\r\n"); return ST_RECOVERY;
+        if(strcmp(line,"menu")==0){ return ST_MENU; }
+        app_printk("Unknown. Type 'resume' or 'menu'.\r\n"); return ST_RECOVERY;
     }
 
     return state;

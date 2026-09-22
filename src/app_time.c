@@ -147,6 +147,26 @@ int app_time_set_from_gps(int hour, int min, int sec,
     return 0;
 }
 
+void app_time_get(struct app_time_utc *out)
+{
+    if (!out) {
+        return;
+    }
+    int64_t now = app_time_now();
+    int64_t days = now / 86400;
+    int64_t rem = now % 86400;
+    if (rem < 0) { rem += 86400; days -= 1; }
+
+    int y, m, d;
+    civil_from_days(days, &y, &m, &d);
+    out->year   = (uint16_t)y;
+    out->month  = (uint8_t)m;
+    out->day    = (uint8_t)d;
+    out->hour   = (uint8_t)(rem / 3600);
+    out->minute = (uint8_t)((rem / 60) % 60);
+    out->second = (uint8_t)(rem % 60);
+}
+
 const char *app_time_str(char *buf, size_t buflen)
 {
     int64_t now = app_time_now();

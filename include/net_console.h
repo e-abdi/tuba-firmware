@@ -39,6 +39,11 @@ const char *console_input_mode_str(console_input_mode_t mode);
 bool console_uart_input_enabled(void);
 
 /* ---- Client / output management (used by the telnet server) --------- */
+
+/* Maximum simultaneous telnet clients. The telnet server in main.c sizes
+ * its poll set from this, so the two cannot drift apart. */
+#define NET_CONSOLE_MAX_CLIENTS 4
+
 void net_console_init(void);
 void net_console_add(int fd);
 void net_console_remove(int fd);

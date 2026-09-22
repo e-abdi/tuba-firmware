@@ -21,7 +21,7 @@
 
 #include "net_console.h"
 
-#define NET_CON_MAX 4            /* max simultaneous telnet clients */
+#define NET_CON_MAX NET_CONSOLE_MAX_CLIENTS   /* max simultaneous telnet clients */
 #define NET_CON_MSG_SIZE 128     /* output chunk size */
 #define NET_CON_MSG_COUNT 64     /* output queue depth */
 

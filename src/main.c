@@ -259,9 +259,76 @@ static void wifi_ap_task(void *p1, void *p2, void *p3)
 
 K_THREAD_DEFINE(wifi_ap, 4096, wifi_ap_task, NULL, NULL, NULL, 5, 0, 0);
 
-/* Telnet console server: accepts clients on port 23, registers them with
- * net_console (so app_printk output reaches them) and feeds their input
- * into the net_console line aggregator. One client served at a time. */
+/* Telnet console server.
+ *
+ * Field problem this solves: the glider's antenna dips below the surface
+ * and the pilot's TCP connection stalls. The old server accepted ONE
+ * client and then sat in a blocking recv() on it, with a listen backlog of
+ * 1. A half-open socket therefore wedged the whole console — the operating
+ * system on the laptop happily opened a new connection, but the glider
+ * never got round to accept()ing it, and the pilot stared at a dead
+ * terminal until TCP's multi-minute timeout finally reaped the old socket.
+ *
+ * The server now:
+ *   - multiplexes with zsock_poll(), so a new connection is accepted
+ *     immediately no matter what state the existing ones are in;
+ *   - serves up to NET_CONSOLE_MAX_CLIENTS at once, and evicts the oldest
+ *     when a new client arrives and every slot is taken, so a ghost session
+ *     can never lock the pilot out;
+ *   - enables aggressive TCP keepalive, so a silently dead peer is
+ *     detected in ~25 s instead of hours;
+ *   - sets a send timeout on every client, so one stalled socket cannot
+ *     block console output to the others (the net_console sender thread
+ *     writes to all clients from one loop).
+ *
+ * Reconnecting is the client's job — see tools/tuba_console.py, which
+ * reconnects automatically and keeps a local capture.
+ */
+
+#define TELNET_PORT            23
+#define TELNET_POLL_TIMEOUT_MS 1000
+#define TELNET_SEND_TIMEOUT_S  3
+
+/* Keepalive: start probing after 10 s idle, every 5 s, give up after 3.
+ * A wedged socket is therefore gone in about 25 s. */
+#define TELNET_KEEPALIVE_IDLE_S  10
+#define TELNET_KEEPALIVE_INTVL_S 5
+#define TELNET_KEEPALIVE_CNT     3
+
+static void telnet_client_close(int *fd)
+{
+    if (*fd < 0) {
+        return;
+    }
+    net_console_remove(*fd);
+    zsock_close(*fd);
+    *fd = -1;
+}
+
+/* Apply the options that keep one bad client from hurting the others. */
+static void telnet_client_configure(int fd)
+{
+    int on = 1;
+    (void)zsock_setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+
+    /* Per-socket keepalive tuning is only available when Zephyr is built
+     * with CONFIG_NET_TCP_KEEPALIVE; without it the defaults still apply. */
+#if defined(TCP_KEEPIDLE)
+    int idle = TELNET_KEEPALIVE_IDLE_S;
+    int intvl = TELNET_KEEPALIVE_INTVL_S;
+    int cnt = TELNET_KEEPALIVE_CNT;
+    (void)zsock_setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+    (void)zsock_setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+    (void)zsock_setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+#endif
+
+    /* Bounded sends: the net_console sender thread fans output out to every
+     * client in turn, so an unbounded blocking send on one stalled socket
+     * would stop mission telemetry reaching all of them. */
+    struct zsock_timeval snd_to = { .tv_sec = TELNET_SEND_TIMEOUT_S, .tv_usec = 0 };
+    (void)zsock_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
+}
+
 static void telnet_server_task(void *p1, void *p2, void *p3)
 {
     ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
@@ -271,7 +338,7 @@ static void telnet_server_task(void *p1, void *p2, void *p3)
 
     struct sockaddr_in addr = {
         .sin_family = AF_INET,
-        .sin_port = htons(23),
+        .sin_port = htons(TELNET_PORT),
         /* Bind to ANY so binding works even before the IPv4 addr is set. */
         .sin_addr = { .s_addr = htonl(INADDR_ANY) },
     };
@@ -298,55 +365,124 @@ static void telnet_server_task(void *p1, void *p2, void *p3)
         return;
     }
 
-    if (zsock_listen(srv, 1) != 0) {
+    /* Backlog matches the client cap: a reconnecting pilot should never
+     * find the queue full while an old session is still being reaped. */
+    if (zsock_listen(srv, NET_CONSOLE_MAX_CLIENTS) != 0) {
         app_printk("TCP: listen failed\r\n");
         zsock_close(srv);
         return;
     }
-    app_printk("TCP: telnet console listening on port 23\r\n");
+    app_printk("TCP: telnet console listening on port %d (max %d clients)\r\n",
+               TELNET_PORT, NET_CONSOLE_MAX_CLIENTS);
+
+    int clients[NET_CONSOLE_MAX_CLIENTS];
+    for (int i = 0; i < NET_CONSOLE_MAX_CLIENTS; i++) {
+        clients[i] = -1;
+    }
 
     while (1) {
-        struct sockaddr_in cli;
-        socklen_t clilen = sizeof(cli);
-        int fd = zsock_accept(srv, (struct sockaddr *)&cli, &clilen);
-        if (fd < 0) {
+        struct zsock_pollfd fds[1 + NET_CONSOLE_MAX_CLIENTS];
+        int slot_of[1 + NET_CONSOLE_MAX_CLIENTS];
+        int nfds = 0;
+
+        fds[nfds].fd = srv;
+        fds[nfds].events = ZSOCK_POLLIN;
+        fds[nfds].revents = 0;
+        slot_of[nfds] = -1;
+        nfds++;
+
+        for (int i = 0; i < NET_CONSOLE_MAX_CLIENTS; i++) {
+            if (clients[i] >= 0) {
+                fds[nfds].fd = clients[i];
+                fds[nfds].events = ZSOCK_POLLIN;
+                fds[nfds].revents = 0;
+                slot_of[nfds] = i;
+                nfds++;
+            }
+        }
+
+        int ret = zsock_poll(fds, nfds, TELNET_POLL_TIMEOUT_MS);
+        if (ret < 0) {
             k_sleep(K_MSEC(200));
             continue;
         }
-        app_printk("TCP: client connected\r\n");
-        int ka = 1; (void)zsock_setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka));
-        net_console_add(fd);
-
-        /* Greeting so the client immediately sees it is in the right place. */
-        char banner[160];
-        snprintk(banner, sizeof(banner),
-                 "\r\nTuba-Glider console (build %d, %s)\r\n"
-                 "Press ENTER to interact with the menu.\r\n\r\n",
-                 BUILD_NUMBER, BUILD_DATE);
-        if (zsock_send(fd, banner, strlen(banner), 0) < 0) {
-            zsock_close(fd);
-            net_console_remove(fd);
-            continue;
+        if (ret == 0) {
+            continue;   /* idle tick */
         }
 
-        /* Pump received bytes into the line aggregator, echoing back so
-         * telnet users see what they type. */
-        char buf[128];
-        while (1) {
-            int n = zsock_recv(fd, buf, sizeof(buf), 0);
-            if (n <= 0) break;
-            /* Normalize line endings to CR for consistent echo. */
-            for (int i = 0; i < n; i++) {
-                if (buf[i] == '\n') buf[i] = '\r';
+        /* --- Existing clients first, so a slot freed by a dead session is
+         *     available to the accept() below in this same pass. --- */
+        for (int k = 1; k < nfds; k++) {
+            int i = slot_of[k];
+            if (fds[k].revents == 0) {
+                continue;
             }
-            if (zsock_send(fd, buf, n, 0) < 0) {
-                break;
+            if (fds[k].revents & (ZSOCK_POLLERR | ZSOCK_POLLHUP | ZSOCK_POLLNVAL)) {
+                app_printk("TCP: client disconnected (link lost)\r\n");
+                telnet_client_close(&clients[i]);
+                continue;
             }
-            net_console_ingest_bytes(buf, n);
+            if (fds[k].revents & ZSOCK_POLLIN) {
+                char buf[128];
+                int n = zsock_recv(clients[i], buf, sizeof(buf), 0);
+                if (n <= 0) {
+                    app_printk("TCP: client disconnected\r\n");
+                    telnet_client_close(&clients[i]);
+                    continue;
+                }
+                /* Normalize line endings to CR for consistent echo. */
+                for (int j = 0; j < n; j++) {
+                    if (buf[j] == '\n') buf[j] = '\r';
+                }
+                if (zsock_send(clients[i], buf, n, 0) < 0) {
+                    telnet_client_close(&clients[i]);
+                    continue;
+                }
+                net_console_ingest_bytes(buf, n);
+            }
         }
-        zsock_close(fd);
-        net_console_remove(fd);
-        app_printk("TCP: client disconnected\r\n");
+
+        /* --- New connections --- */
+        if (fds[0].revents & ZSOCK_POLLIN) {
+            struct sockaddr_in cli;
+            socklen_t clilen = sizeof(cli);
+            int fd = zsock_accept(srv, (struct sockaddr *)&cli, &clilen);
+            if (fd >= 0) {
+                int slot = -1;
+                for (int i = 0; i < NET_CONSOLE_MAX_CLIENTS; i++) {
+                    if (clients[i] < 0) { slot = i; break; }
+                }
+                if (slot < 0) {
+                    /* All slots taken. The oldest is the most likely ghost
+                     * (a session the pilot already gave up on), so evict it
+                     * rather than refuse the pilot who is trying to get back
+                     * in right now. */
+                    app_printk("TCP: client limit reached — evicting oldest session\r\n");
+                    telnet_client_close(&clients[0]);
+                    for (int i = 0; i < NET_CONSOLE_MAX_CLIENTS - 1; i++) {
+                        clients[i] = clients[i + 1];
+                    }
+                    slot = NET_CONSOLE_MAX_CLIENTS - 1;
+                    clients[slot] = -1;
+                }
+
+                telnet_client_configure(fd);
+                clients[slot] = fd;
+                net_console_add(fd);
+                app_printk("TCP: client connected\r\n");
+
+                /* Greeting so the client immediately sees it is in the
+                 * right place — and, after a reconnect, that it is back. */
+                char banner[200];
+                snprintk(banner, sizeof(banner),
+                         "\r\nTuba-Glider console (build %d, %s)\r\n"
+                         "Press ENTER to interact with the menu.\r\n\r\n",
+                         BUILD_NUMBER, BUILD_DATE);
+                if (zsock_send(fd, banner, strlen(banner), 0) < 0) {
+                    telnet_client_close(&clients[slot]);
+                }
+            }
+        }
     }
 }
 

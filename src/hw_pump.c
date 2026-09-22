@@ -126,6 +126,11 @@ void pump_reset_position(void)
     k_work_cancel_delayable(&pump.stop_work);
 }
 
+void pump_set_position_sec(int32_t pos_s)
+{
+    pump.position_sec = pos_s;
+}
+
 #else
 
 /* --- Stubs (PUMP not supported) --- */
@@ -153,6 +158,11 @@ int32_t pump_get_position_sec(void)
 
 void pump_reset_position(void)
 {
+}
+
+void pump_set_position_sec(int32_t pos_s)
+{
+    (void)pos_s;
 }
 
 #endif

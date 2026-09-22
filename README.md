@@ -68,6 +68,10 @@ MENU
 ├── 3 simulate          mission with synthetic depth (bench testing)
 ├── 4 deploy            real mission (requires external pressure sensor)
 └── 5 OTA firmware update
+
+RECOVERY                entered automatically when a safety guard trips
+├── resume              park -> start a new mission
+└── menu                back to the main menu
 ```
 
 The full state machine is documented in `tuba_state_machine.puml`
@@ -80,14 +84,22 @@ thread; simulate just replaces measured depth with a synthetic profile
 (0.5 m/s sink/rise), so the entire sequence can be tested dry.
 
 Each cycle: surface trim → dive trim → sink to `Dive depth` (or `Dive
-timeout`) → climb trim → rise to the surface → surface trim → GPS fix →
-10-second window where ENTER stops the mission, otherwise the next cycle
-starts.
+timeout`) → apogee (swing to climb trim) → rise to the surface → surface
+trim → GPS fix → 10-second window where ENTER stops the mission, otherwise
+the next cycle starts.
 
-Once per second the mission prints a telemetry line:
+The whole cycle runs inside the [mission safety
+envelope](#mission-safety-envelope); if a guard trips, the dive is
+abandoned, the glider is parked in the recovery position, and the UI ends
+up in the RECOVERY state instead of the main menu.
+
+Once per second the mission prints a telemetry line, plus a
+machine-readable `$D` row for the [basestation
+converter](#dive-files-and-the-basestation):
 
 ```
 [SENS] 2026-07-12 14:03:22Z IntP=99321 Pa, Depth=3.20m, WaterT=17.85C, H=181.0,R=0.5,P=-32.0
+$D,3,320,181.0,-32.0,0.5,7.0,0.0,3.0,1,99321,17.85
 ```
 
 Heading is held by banking the roll mass toward `Desired heading`
@@ -166,6 +178,12 @@ until saved with `s`.
 | e | Desired heading [deg] | course to hold (0–359 true) |
 | f | Leak threshold [mV] | ADC below this = leak alarm; **0 = off** (default — a disconnected pin floats and would false-alarm) |
 | g | Console input mode | 0 = UART+WiFi, 1 = UART, 2 = WiFi |
+| h | T_MISSION [min] | hard limit on one surface-to-surface cycle; **0 = off** |
+| i | Depth limit [m] | abort above this depth; **0 = off** |
+| j | Sensor read retries | attempts before a sensor counts as failed |
+| k | Pump full stroke [s] | pump travel fully in → fully out (recovery uses it) |
+| l | Pitch full stroke [s] | pitch-mass travel full aft → full forward |
+| m | Recovery report interval [min] | how often the parked glider reports |
 
 Positions are dead-reckoned "seconds of motor travel from zero" — there
 are no encoders; the pitch limit switches are the only absolute reference.
@@ -176,6 +194,82 @@ are no encoders; the pitch limit switches are the only absolute reference.
   alarms on first detection and every 30 s while wet.
 - **Pitch limit switches**: checked on every main-loop cycle; on
   overtravel the pitch motor is stopped and backed off for 1 s.
+
+### Mission safety envelope
+
+Modelled on the Seaglider, which never trusts a dive to end on its own.
+Every cycle runs inside these bounds; breaching any of them abandons the
+dive and parks the glider in the **recovery position** — pump driven fully
+OUT (maximum buoyancy) and the pitch mass fully FORWARD, so it floats
+nose-down / antenna-up, the same attitude a Seaglider takes after `$QUIT`.
+
+| Guard | Parameter | Seaglider equivalent | Behavior |
+|-------|-----------|----------------------|----------|
+| Cycle timeout | `T_MISSION` (h) | `$T_MISSION` | abort at `T_MISSION`; also abort at **`T_MISSION`/2 if the glider is not yet climbing** |
+| Depth ceiling | Depth limit (i) | `$D_ABORT` | abort below this depth |
+| Sensor failure | Sensor retries (j) | retry-then-error | retry N times; a failed **depth** sensor aborts, other sensors are logged and tallied |
+| Leak | Leak threshold (f) | — | abort while wet |
+
+Notes:
+
+- With `T_MISSION` at 0 there is no user limit and no half-time check, but
+  the cycle still ends after 60 minutes — an unbounded climb loop is not a
+  state the glider should be able to reach.
+- The recovery maneuver drives both actuators as **blind full strokes**
+  against their end stops, not dead-reckoned moves. An abort is exactly the
+  situation where the believed position may be wrong. (Once the planned
+  pump position sensor exists, this becomes a closed-loop move.)
+- After parking, the worker holds station and reports position every
+  `Recovery report interval` minutes until the operator presses ENTER; the
+  UI then lands in the RECOVERY state, where `resume` starts a new mission
+  and `menu` returns to the top.
+
+## Dive files and the basestation
+
+Everything the firmware prints reaches the console **and** the OpenLog SD
+recorder, so the OpenLog capture is the raw dive record. Alongside the
+human-readable `[SENS]` lines the firmware interleaves machine-readable
+records modelled on the Seaglider `.log` file — `$VERSION`, a full
+parameter dump, `$GPS1`/`$GPS2`, `$STATE` phase transitions, `$GC` motor
+moves, one `$D` row per sample, `$ERRORS` and `$FINISH`. Every structured
+line starts with `$` in column 0, so they survive being mixed with menus
+and prose. See `include/dive_log.h` for the full record set.
+
+```bash
+# Turn a capture into Seaglider-style per-dive files
+tools/tuba2seaglider.py capture.txt -o /path/to/mission --glider 7
+#   -> p0070001.log  parameters, fixes, phase transitions, motor moves
+#   -> p0070001.eng  the sampled data table
+tools/tuba2seaglider.py capture.txt --list    # just see what is in there
+```
+
+**Units caveat**: a Seaglider reports actuator positions in cm, degrees and
+cc because it has position feedback and a calibration. Tuba dead-reckons in
+*seconds of motor travel*, so those columns are named `pitchCtl_s`,
+`rollCtl_s`, `vbdCtl_s` and the `.eng` header carries a `%units` line
+saying so. Do not feed them to a Seaglider flight model as-is.
+
+## Watching a dive over WiFi
+
+The glider's telnet console drops when the antenna dips below the surface.
+Plain `telnet` gives up at that point and also opens with option
+negotiation the glider does not speak (which is where the occasional burst
+of garbage at connect time comes from). Use the bundled client instead:
+
+```bash
+tools/tuba_console.py                  # 192.168.4.1:23, capture under ./captures
+tools/tuba_console.py --log dive7.txt
+```
+
+It reconnects automatically with backoff, keeps a timestamped capture of
+the whole session, and tells you when a typed command was *not* sent
+because the link was down, rather than swallowing it.
+
+On the firmware side the telnet server multiplexes with `poll()` rather
+than blocking on one client, serves up to four sessions, evicts the oldest
+when a new client arrives and all slots are taken, and uses aggressive TCP
+keepalive (~25 s to detect a dead peer). A stalled session can no longer
+lock the pilot out or block telemetry to the other consoles.
 
 ## Over-The-Air (OTA) updates
 
@@ -202,7 +296,8 @@ the upgrade and reboots. Use `zephyr.signed.bin`, never `zephyr.bin`.
 src/
   main.c              boot, WiFi AP + telnet server, state-machine loop
   ui_menu.c           menus: per-state entry/event/line handlers
-  deploy.c            mission execution (deploy + simulate, shared cycle)
+  deploy.c            mission execution + safety envelope + recovery
+  dive_log.c          Seaglider-style structured dive records
   app_print.c         console output fan-out (UART + WiFi clients)
   app_params.c        persistent mission parameters (NVS)
   app_time.c          UTC wall clock (build-date default, GPS-synced)
@@ -214,6 +309,14 @@ src/
   hw_ms5837.c         external pressure/temp        hw_bmp180.c hull pressure
   hw_tsys01.c         water temperature (Celsius)   hw_hmc6343.c compass
   hw_gps.c            u-blox GPS over I2C (DDC)
+
+include/
+  dive_log.h          the $-record set, and the units caveat — read this
+                      before writing anything that parses a capture
+
+tools/
+  tuba_console.py     reconnecting telnet client + session capture
+  tuba2seaglider.py   capture -> Seaglider-style .log / .eng per dive
 ```
 
 Adding a UI state: one enum value in `include/app_events.h`, handlers in

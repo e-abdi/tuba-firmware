@@ -43,6 +43,25 @@ struct app_params {
 
     /* --- Console --- */
     uint8_t  console_input_mode;   /* console_input_mode_t: 0=both 1=UART 2=WiFi */
+
+    /* --- Mission safety envelope (Seaglider $T_MISSION / $D_ABORT style) ---
+     *
+     * These bound one surface-to-surface cycle. Anything that trips here
+     * ends the mission in the RECOVERY POSITION (pump fully out, pitch
+     * fully forward) rather than continuing to fly — see deploy.c.
+     */
+    uint16_t t_mission_min;        /* hard limit on one dive cycle [min]; 0 = off.
+                                    * Seaglider $T_MISSION. Half of it is the
+                                    * "must be climbing by now" checkpoint. */
+    uint16_t max_depth_m;          /* abort above this depth [m]; 0 = off.
+                                    * Seaglider $D_ABORT. */
+    uint16_t sensor_retries;       /* read attempts before a sensor is declared
+                                    * failed (Seaglider retries similarly) */
+    uint16_t pump_full_stroke_s;   /* pump travel fully IN -> fully OUT [s];
+                                    * the blind stroke used by recovery */
+    uint16_t pitch_full_stroke_s;  /* pitch mass travel full aft -> full fwd [s] */
+    uint16_t t_rsleep_min;         /* minutes between recovery status reports
+                                    * (Seaglider $T_RSLEEP) */
 };
 
 /* Load parameters from NVS (or defaults) and apply side effects

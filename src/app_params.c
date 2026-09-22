@@ -57,6 +57,21 @@ static void app_params_set_defaults_internal(void)
     g_params.leak_threshold_mv   = 0;
 
     g_params.console_input_mode  = CONSOLE_INPUT_BOTH;
+
+    /* Safety envelope. t_mission_min must comfortably exceed the time a
+     * healthy cycle takes (dive_timeout_min plus the climb), or every dive
+     * ends in recovery; 3x the dive timeout is a sane starting point. */
+    g_params.t_mission_min       = 15;
+    /* 0 = depth abort disabled, same convention as leak_threshold_mv: a
+     * badly chosen limit causes nuisance aborts, so the pilot opts in.
+     * Seaglider runs $D_ABORT about 1.4x $D_TGT. */
+    g_params.max_depth_m         = 0;
+    g_params.sensor_retries      = 10;
+    /* Measured on the bench: the pump reaches its stop in ~4 s, the pitch
+     * mass travels end to end in ~12 s. */
+    g_params.pump_full_stroke_s  = 4;
+    g_params.pitch_full_stroke_s = 12;
+    g_params.t_rsleep_min        = 5;
 }
 
 /* Push parameter values into the subsystems that cache them. Called after

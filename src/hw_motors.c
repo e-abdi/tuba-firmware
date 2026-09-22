@@ -218,6 +218,11 @@ void motor_reset_position(enum motor_id id)
     m->position_sec = 0;
 }
 
+void motor_set_position_sec(enum motor_id id, int32_t pos_s)
+{
+    get_motor(id)->position_sec = pos_s;
+}
+
 void motors_reset_all_positions(void)
 {
     for (int i = 0; i < 2; i++) {

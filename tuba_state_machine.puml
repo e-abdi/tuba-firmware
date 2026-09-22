@@ -12,7 +12,7 @@ MENU --> SIMULATE: "3" / simulate deployment
 MENU --> DEPLOYED: "4" / deploy\n[external pressure sensor present]
 MENU --> OTA_MENU: "5" / firmware update
 
-PARAMS_MENU --> PARAM_INPUT: "1-g" / select parameter
+PARAMS_MENU --> PARAM_INPUT: "1-m" / select parameter
 PARAMS_MENU --> PARAMS_MENU: "s" / save\n"r" / reset defaults
 PARAMS_MENU --> MENU: "x" / back
 
@@ -48,11 +48,14 @@ OTA_MENU --> MENU: "x" / cancel
 OTA_MENU --> MENU: download or verify failed
 OTA_MENU --> [*]: verified / reboot into new firmware
 
-DEPLOYED --> MENU: mission complete\n[worker thread finished]
+DEPLOYED --> MENU: mission complete\n[worker finished, no abort]
+DEPLOYED --> RECOVERY: safety guard tripped\n[worker finished, deploy_aborted()]
 
-SIMULATE --> MENU: simulation complete\n[worker thread finished]
+SIMULATE --> MENU: simulation complete\n[worker finished, no abort]
+SIMULATE --> RECOVERY: safety guard tripped\n[worker finished, deploy_aborted()]
 
 RECOVERY --> DEPLOYED: "resume"
+RECOVERY --> MENU: "menu"
 RECOVERY --> RECOVERY: (other input)
 
 note right of POWERUP_WAIT
@@ -78,6 +81,10 @@ note right of PARAMS_MENU
     - desired heading
     - leak threshold
     - console input mode (UART/WiFi)
+    - safety envelope (h-m):
+      T_MISSION, depth limit,
+      sensor retries, full-stroke
+      times, recovery interval
 
     Stored in NVS; "s" saves,
     edits alone are RAM-only.
@@ -103,13 +110,20 @@ note right of DEPLOYED
     2. wait deploy_wait_s
     3. GPS fix (syncs UTC clock)
     4. dive to depth / timeout
-    5. climb to surface
-    6. GPS fix, 10 s ENTER window
-    7. repeat until ENTER
+    5. apogee (swing to climb trim)
+    6. climb to surface
+    7. GPS fix, 10 s ENTER window
+    8. repeat until ENTER
 
-    [SENS] telemetry every second:
-    UTC timestamp, hull pressure,
-    depth, water temp, attitude.
+    Every second: a [SENS] line
+    (UTC, hull pressure, depth,
+    water temp, attitude) and a
+    machine-readable $D row.
+
+    Each phase is bounded by the
+    safety envelope; a breach
+    aborts to RECOVERY instead of
+    completing the cycle.
 end note
 
 note right of SIMULATE
@@ -120,8 +134,24 @@ note right of SIMULATE
 end note
 
 note right of RECOVERY
-    Error hold state. Waits for
-    "resume" to re-deploy.
+    Entered when a safety guard
+    trips: T_MISSION (or half of
+    it with no climb yet), depth
+    limit, depth-sensor failure,
+    or a leak.
+
+    The worker has already parked
+    the glider in the RECOVERY
+    POSITION -- pump fully OUT,
+    pitch fully FORWARD, roll
+    neutral -- and held station,
+    reporting every T_RSLEEP min
+    until the operator pressed
+    ENTER.
+
+    on_entry prints the abort
+    cause. "resume" re-deploys,
+    "menu" returns to the top.
 end note
 
 @enduml

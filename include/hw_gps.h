@@ -15,4 +15,9 @@ void gps_fix_interactive(void);
  */
 bool gps_fix_wait(int timeout_sec);
 
+/* Same as gps_fix_wait(), but also returns the fix position in decimal
+ * degrees so the caller can log it (the dive log's $GPS1/$GPS2 lines).
+ * out_lat/out_lon may be NULL; they are left untouched on failure. */
+bool gps_fix_wait_pos(int timeout_sec, double *out_lat, double *out_lon);
+
 #endif /* HW_GPS_H */

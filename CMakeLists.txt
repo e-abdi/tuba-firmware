@@ -16,7 +16,8 @@ target_sources(app PRIVATE
   # Core application
   src/main.c              # boot, WiFi AP + telnet server, state machine loop
   src/ui_menu.c           # menu system: per-state entry/event/line handlers
-  src/deploy.c            # mission execution (deploy + simulate)
+  src/deploy.c            # mission execution (deploy + simulate) + safety envelope
+  src/dive_log.c          # Seaglider-style structured dive records ($STATE/$GC/$D)
   # Infrastructure
   src/app_print.c         # console output mirroring (UART + WiFi clients)
   src/app_params.c        # persistent mission parameters (NVS)

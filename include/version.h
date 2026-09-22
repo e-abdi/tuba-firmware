@@ -1,7 +1,7 @@
 #ifndef VERSION_H
 #define VERSION_H
 
-#define BUILD_NUMBER 22
-#define BUILD_DATE "2026-07-26 13:13:56"
+#define BUILD_NUMBER 25
+#define BUILD_DATE "2026-09-22 22:11:17"
 
 #endif /* VERSION_H */

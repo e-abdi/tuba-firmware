@@ -42,6 +42,18 @@ int app_time_set_from_gps(int hour, int min, int sec,
 /* Current Unix time (seconds since 1970-01-01 UTC). */
 int64_t app_time_now(void);
 
+/* Broken-down UTC, for callers that need the fields rather than a string
+ * (the dive log formats dates several different ways). */
+struct app_time_utc {
+    uint16_t year;      /* full year, e.g. 2026 */
+    uint8_t  month;     /* 1-12 */
+    uint8_t  day;       /* 1-31 */
+    uint8_t  hour;      /* 0-23 */
+    uint8_t  minute;    /* 0-59 */
+    uint8_t  second;    /* 0-59 */
+};
+void app_time_get(struct app_time_utc *out);
+
 /* Format the current time as "YYYY-MM-DD hh:mm:ss" into buf.
  * buf must be at least APP_TIME_STR_LEN bytes. Returns buf. */
 #define APP_TIME_STR_LEN 20

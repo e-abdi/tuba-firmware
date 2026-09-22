@@ -32,4 +32,13 @@ bool simulate_is_running(void);
  * Safe to call any time — pressing ENTER mid-dive schedules the stop. */
 void deploy_notify_enter(void);
 
+/* True when the last mission ended because a safety guard tripped rather
+ * than because the operator stopped it. The glider is then parked in the
+ * recovery position and the UI should land in the RECOVERY state. */
+bool deploy_aborted(void);
+
+/* Human-readable cause of that abort, or NULL if the mission ended
+ * normally. Valid until the next mission starts. */
+const char *deploy_abort_reason(void);
+
 #endif

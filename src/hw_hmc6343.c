@@ -43,9 +43,22 @@ static int eeprom_write(uint8_t addr, uint8_t val){
 }
 
 static int hmc6343_ensure_perm_orientation_uf(void){
+    /* hmc6343_read() calls hmc6343_init() -> here on every attempt, so an
+     * absent compass would otherwise print one line per retry (10 per
+     * sample). That is ~1.4 kB per sample against a 9600-baud console, so
+     * report the failure once and stay quiet until it reads again. */
+    static bool eeprom_fail_logged;
     uint8_t om1 = 0;
     int rc = eeprom_read(0x04, &om1);
-    if (rc) { app_printk("[HMC6343] EEPROM read 0x04 failed: %d\r\n", rc); return rc; }
+    if (rc) {
+        if (!eeprom_fail_logged) {
+            app_printk("[HMC6343] EEPROM read 0x04 failed: %d"
+                       " (repeats silenced)\r\n", rc);
+            eeprom_fail_logged = true;
+        }
+        return rc;
+    }
+    eeprom_fail_logged = false;
     uint8_t new_om1 = (om1 & ~0x07u) | 0x04u;
     if (new_om1 != om1) {
         app_printk("[HMC6343] Writing OM1 (0x04) from 0x%02X to 0x%02X for UF\r\n", om1, new_om1);
