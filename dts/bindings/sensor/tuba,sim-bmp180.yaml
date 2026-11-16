@@ -1,0 +1,8 @@
+# TUBA software-in-the-loop: an I2C device whose behaviour is provided by
+# src/sil/sil_emul_bmp180.c on native_sim (no real driver exists; the firmware
+# talks to it with raw I2C transfers like it does to the real chip).
+description: Simulated BMP180 hull pressure sensor (TUBA SIL)
+
+compatible: "tuba,sim-bmp180"
+
+include: i2c-device.yaml

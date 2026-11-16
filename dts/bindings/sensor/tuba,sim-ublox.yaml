@@ -1,0 +1,8 @@
+# TUBA software-in-the-loop: an I2C device whose behaviour is provided by
+# src/sil/sil_emul_ublox.c on native_sim (no real driver exists; the firmware
+# talks to it with raw I2C transfers like it does to the real chip).
+description: Simulated u-blox GPS over I2C/DDC (TUBA SIL)
+
+compatible: "tuba,sim-ublox"
+
+include: i2c-device.yaml

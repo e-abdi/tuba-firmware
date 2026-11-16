@@ -25,6 +25,16 @@ west flash
 The signed OTA image is produced at `build/tuba/zephyr/zephyr.signed.bin`
 (sysbuild) — see [OTA updates](#over-the-air-ota-updates).
 
+## Simulator (software-in-the-loop)
+
+The firmware also builds as a Linux executable that flies the Gazebo glider
+from [tuba-sim](https://github.com/e-abdi/tuba-sim) — same menus, same
+missions, emulated sensors and motors. See [SIL.md](SIL.md).
+
+```bash
+./sil_build.sh && ./sil_run.sh
+```
+
 ## Consoles
 
 Two consoles are live at the same time; output is mirrored to both:
@@ -309,6 +319,7 @@ src/
   hw_ms5837.c         external pressure/temp        hw_bmp180.c hull pressure
   hw_tsys01.c         water temperature (Celsius)   hw_hmc6343.c compass
   hw_gps.c            u-blox GPS over I2C (DDC)
+  sil/                software-in-the-loop: UDP link + chip emulators for native_sim (SIL.md)
 
 include/
   dive_log.h          the $-record set, and the units caveat — read this

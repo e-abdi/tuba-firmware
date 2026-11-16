@@ -1,0 +1,111 @@
+/*
+ * native_sim.overlay — Tuba firmware as a Linux process (software-in-the-loop)
+ *
+ * Mirrors the ESP32 board overlay onto Zephyr's emulated peripherals so
+ * that every hw_*.c driver compiles and runs UNCHANGED:
+ *
+ *   motor H-bridge pins  -> gpio0 (zephyr,gpio-emul), same pin numbers
+ *   pitch limit switches -> gpio1 pins 0/1 (hw_limit_switches.c expects gpio1)
+ *   i2c0 sensors         -> zephyr,i2c-emul-controller + src/sil emulators
+ *   i2c_temp (TSYS01)    -> a second emulated I2C controller
+ *   leak detector ADC    -> adc0 (zephyr,adc-emul) channel 6, 1.1 V reference
+ *
+ * src/sil/sil_link.c reads the emulated outputs and drives the emulated
+ * inputs from the Gazebo bridge.
+ */
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+	};
+
+	aliases {
+		roll-in-1 = &roll_in_1;
+		roll-in-2 = &roll_in_2;
+		pitch-in-1 = &pitch_in_1;
+		pitch-in-2 = &pitch_in_2;
+		pump-in-1 = &pump_in_1;
+		pump-in-2 = &pump_in_2;
+		i2c0 = &i2c0;
+	};
+
+	/* Same GPIO numbers as the ESP32 (GPIO25/26 roll, 27/14 pitch, 18/19 pump). */
+	motor_gpios: motor-gpios {
+		compatible = "gpio-leds";
+		roll_in_1: roll-in-1 { gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>; };
+		roll_in_2: roll-in-2 { gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>; };
+		pitch_in_1: pitch-in-1 { gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>; };
+		pitch_in_2: pitch-in-2 { gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>; };
+		pump_in_1: pump-in-1 { gpios = <&gpio0 18 GPIO_ACTIVE_HIGH>; };
+		pump_in_2: pump-in-2 { gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>; };
+	};
+
+	/* ESP32 "gpio1" port (GPIO32-39): the limit switches are pins 0 and 1. */
+	gpio1: gpio_emul_1 {
+		status = "okay";
+		compatible = "zephyr,gpio-emul";
+		rising-edge;
+		falling-edge;
+		high-level;
+		low-level;
+		gpio-controller;
+		ngpios = <8>;
+		#gpio-cells = <2>;
+	};
+
+	/* Water-temperature bus (bit-banged GPIO4/13 on the ESP32). */
+	i2c_temp: i2c@900 {
+		status = "okay";
+		compatible = "zephyr,i2c-emul-controller";
+		clock-frequency = <I2C_BITRATE_STANDARD>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		#forward-cells = <1>;
+		reg = <0x900 4>;
+
+		tsys01_sim: tsys01@77 {
+			compatible = "tuba,sim-tsys01";
+			reg = <0x77>;
+			status = "okay";
+		};
+	};
+};
+
+&gpio0 {
+	ngpios = <32>;
+};
+
+/* Main sensor bus: MS5837 @0x76, BMP180 @0x77, HMC6343 @0x19, u-blox @0x42 */
+&i2c0 {
+	status = "okay";
+
+	ms5837_sim: ms5837@76 {
+		compatible = "tuba,sim-ms5837";
+		reg = <0x76>;
+		status = "okay";
+	};
+	bmp180_sim: bmp180@77 {
+		compatible = "tuba,sim-bmp180";
+		reg = <0x77>;
+		status = "okay";
+	};
+	hmc6343_sim: hmc6343@19 {
+		compatible = "tuba,sim-hmc6343";
+		reg = <0x19>;
+		status = "okay";
+	};
+	ublox_sim: gps@42 {
+		compatible = "tuba,sim-ublox";
+		reg = <0x42>;
+		status = "okay";
+	};
+};
+
+/* hw_leak.c: channel 6, ADC_REF_INTERNAL = 1100 mV, gain 1/4, 12 bit */
+&adc0 {
+	nchannels = <8>;
+	ref-internal-mv = <1100>;
+};

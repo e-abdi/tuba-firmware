@@ -24,7 +24,6 @@ target_sources(app PRIVATE
   src/app_time.c          # UTC wall clock (build-date default, GPS-synced)
   src/net_console.c       # WiFi console backend + input-mode switch
   src/sensors.c           # expected-sensor registry + I2C scan report
-  src/ota_simple.c        # OTA firmware download into MCUboot slot1
   # Hardware drivers
   src/hw_motors.c         # pitch/roll mass motors (H-bridge GPIO)
   src/hw_pump.c           # variable-buoyancy pump
@@ -38,6 +37,30 @@ target_sources(app PRIVATE
 )
 
 target_include_directories(app PRIVATE include)
+
+if(CONFIG_BOARD_NATIVE_SIM)
+  # Software-in-the-loop build (prj_sil.conf, boards/native_sim.overlay):
+  # the hardware drivers above run unchanged against Zephyr's emulated
+  # GPIO/I2C/ADC, and src/sil/ connects those emulators to the Gazebo
+  # bridge over UDP. See SIL.md.
+  target_sources(app PRIVATE
+    src/sil/sil_state.c        # latest simulated sensor values
+    src/sil/sil_link.c         # UDP link: H-bridge pins out, sensor values in
+    src/sil/sil_emul_ms5837.c  # emulated I2C sensors ...
+    src/sil/sil_emul_bmp180.c
+    src/sil/sil_emul_hmc6343.c
+    src/sil/sil_emul_tsys01.c
+    src/sil/sil_emul_ublox.c
+    src/sil/ota_stub.c         # OTA menu entry: not available in the simulator
+  )
+  target_include_directories(app PRIVATE src/sil)
+  # The host glibc hides strnlen() & co. behind feature macros under -std=c11.
+  target_compile_definitions(app PRIVATE _POSIX_C_SOURCE=200809L)
+else()
+  target_sources(app PRIVATE
+    src/ota_simple.c        # OTA firmware download into MCUboot slot1
+  )
+endif()
 
 # Force-include prototypes for app_printk so all sources see it
 target_compile_options(app PRIVATE -include app_print.h)
