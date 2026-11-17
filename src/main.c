@@ -134,7 +134,19 @@ static void timeout_cb(struct k_timer *tmr); K_TIMER_DEFINE(startup_timeout, tim
 static void tick_cb(struct k_timer *tmr);    K_TIMER_DEFINE(ui_tick, tick_cb, NULL);
 K_MSGQ_DEFINE(evt_q, sizeof(event_t), 8, 4);
 
-static inline void post_event(event_id_t id) { event_t e = {.id=id}; (void)k_msgq_put(&evt_q,&e,K_NO_WAIT); }
+/* Ticks are expendable; an ENTER is not. The 20 Hz tick fills the 8-slot
+ * queue whenever the main loop stalls for more than ~0.4 s (e.g. the 1.1 s
+ * limit-switch back-off in limit_switches_check_and_stop()), and an ENTER
+ * posted then used to be dropped silently — the operator's keypress during
+ * the power-up countdown went nowhere. Make room by discarding a tick. */
+static inline void post_event(event_id_t id) {
+    event_t e = {.id=id};
+    if (k_msgq_put(&evt_q,&e,K_NO_WAIT) != 0 && id != EVT_TICK) {
+        event_t drop;
+        (void)k_msgq_get(&evt_q,&drop,K_NO_WAIT);
+        (void)k_msgq_put(&evt_q,&e,K_NO_WAIT);
+    }
+}
 static void timeout_cb(struct k_timer *tmr){ARG_UNUSED(tmr);post_event(EVT_TIMEOUT);}
 static void tick_cb(struct k_timer *tmr){ARG_UNUSED(tmr);post_event(EVT_TICK);}
 
