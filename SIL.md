@@ -16,6 +16,7 @@ src/sil/sil_link.c                    20 Hz: H-bridge pin states -> bridge, sens
 src/sil/sil_emul_*.c                  MS5837, BMP180, HMC6343, TSYS01, u-blox register-level emulators
 src/sil/sil_protocol.h                the two UDP packets (copy kept in tuba-sim/bridge/)
 src/sil/ota_stub.c                    OTA menu entry says "not available"
+src/sil/sil_console.c                 printk straight to the terminal (native_sim's own console line-buffers)
 ```
 
 ## Build and run

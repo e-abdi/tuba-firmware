@@ -52,10 +52,16 @@ if(CONFIG_BOARD_NATIVE_SIM)
     src/sil/sil_emul_tsys01.c
     src/sil/sil_emul_ublox.c
     src/sil/ota_stub.c         # OTA menu entry: not available in the simulator
+    src/sil/sil_console.c      # printk straight to the terminal (menu prompts, 'q' keys)
   )
   target_include_directories(app PRIVATE src/sil)
   # The host glibc hides strnlen() & co. behind feature macros under -std=c11.
   target_compile_definitions(app PRIVATE _POSIX_C_SOURCE=200809L)
+  # Xtensa (ESP32) has unsigned char; x86 has signed char. With a signed
+  # char, cbprintf's output callback returns a negative value for the first
+  # byte of any UTF-8 character (e.g. the em dashes in our messages) and
+  # drops the rest of the line. Match the target's semantics.
+  zephyr_compile_options(-funsigned-char)
 else()
   target_sources(app PRIVATE
     src/ota_simple.c        # OTA firmware download into MCUboot slot1
